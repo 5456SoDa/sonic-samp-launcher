@@ -1,0 +1,12 @@
+target/
+*.exe
+*.dll
+*.pdb
+*.lib
+*.exp
+*.obj
+.vs/
+*.user
+*.suo
+backup/
+SampLauncher_test.exe
