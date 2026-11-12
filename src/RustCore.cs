@@ -43,6 +43,24 @@ internal class RustCore : ICore
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	private static extern void core_scan_cancel(ulong handle);
 
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_rcon_send(byte[] host, ushort port, byte[] pass, byte[] cmd);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_db_init(byte[] dbPath, byte[] playtimeTxtPath, byte[] statsTxtPath);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern long core_db_add_playtime(byte[] serverKey, long deltaSeconds);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_db_get_all_playtime();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern int core_db_record_stat(byte[] ip, byte[] port, byte[] recordedAt, int players);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_db_get_stats(byte[] ip, byte[] port, uint limit);
+
 	public string EngineName
 	{
 		get { return engineVersion; }
@@ -157,8 +175,16 @@ internal class RustCore : ICore
 
 	public string RconSend(string host, int port, string pass, string cmd)
 	{
-		// Phase 2 will move RCON to Rust; delegate for now
-		return fallback.RconSend(host, port, pass, cmd);
+		if (port < 1 || port > 65535)
+		{
+			return "(พอร์ตไม่ถูกต้อง)";
+		}
+		string res = TakeOwnedStr(core_rcon_send(
+			ToUtf8(host),
+			(ushort)port,
+			ToUtf8(pass ?? ""),
+			ToUtf8(cmd ?? "")));
+		return res ?? "(ไม่มีการตอบกลับ)";
 	}
 
 	public void LaunchAndInject(string gtaPath, string dllPath, string workDir, string nick, string ip, string port, string pass)
@@ -300,6 +326,107 @@ internal class RustCore : ICore
 		{
 			core_scan_cancel(handle);
 		}
+	}
+
+	public void InitStorage(string dbPath, string playtimeTxtPath, string statsTxtPath)
+	{
+		string err = TakeOwnedStr(core_db_init(
+			ToUtf8(dbPath),
+			ToUtf8(playtimeTxtPath ?? ""),
+			ToUtf8(statsTxtPath ?? "")));
+		if (!string.IsNullOrEmpty(err))
+		{
+			fallback.InitStorage(dbPath, playtimeTxtPath, statsTxtPath);
+		}
+	}
+
+	public Dictionary<string, long> LoadAllPlaytime()
+	{
+		Dictionary<string, long> map = new Dictionary<string, long>();
+		string json = TakeOwnedStr(core_db_get_all_playtime());
+		if (string.IsNullOrEmpty(json))
+		{
+			return fallback.LoadAllPlaytime();
+		}
+		try
+		{
+			JavaScriptSerializer js = new JavaScriptSerializer();
+			Dictionary<string, object> d = js.Deserialize<Dictionary<string, object>>(json);
+			if (d != null)
+			{
+				foreach (KeyValuePair<string, object> kv in d)
+				{
+					long secs;
+					try
+					{
+						secs = Convert.ToInt64(kv.Value);
+					}
+					catch
+					{
+						secs = 0L;
+					}
+					if (secs > 0)
+					{
+						map[kv.Key] = secs;
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return map;
+	}
+
+	public long AddPlaytime(string serverKey, long deltaSeconds)
+	{
+		long total = core_db_add_playtime(ToUtf8(serverKey), deltaSeconds);
+		if (total < 0)
+		{
+			return fallback.AddPlaytime(serverKey, deltaSeconds);
+		}
+		return total;
+	}
+
+	public void RecordStat(string ip, string port, string recordedAt, int players)
+	{
+		int res = core_db_record_stat(ToUtf8(ip), ToUtf8(port), ToUtf8(recordedAt), players);
+		if (res < 0)
+		{
+			fallback.RecordStat(ip, port, recordedAt, players);
+		}
+	}
+
+	public List<int> GetStats(string ip, string port, int limit)
+	{
+		string json = TakeOwnedStr(core_db_get_stats(ToUtf8(ip), ToUtf8(port), (uint)(limit > 0 ? limit : 500)));
+		if (string.IsNullOrEmpty(json))
+		{
+			return fallback.GetStats(ip, port, limit);
+		}
+		List<int> list = new List<int>();
+		try
+		{
+			JavaScriptSerializer js = new JavaScriptSerializer();
+			IList arr = js.DeserializeObject(json) as IList;
+			if (arr != null)
+			{
+				foreach (object item in arr)
+				{
+					try
+					{
+						list.Add(Convert.ToInt32(item));
+					}
+					catch
+					{
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return list;
 	}
 
 	private static List<string[]> ParseStringMatrix(string json)

@@ -151,6 +151,7 @@ internal partial class LauncherForm : Form
 	private Label lblEngine;
 	private string bootUrl;
 	private string cfgPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "samp_launcher.cfg");
+	private string dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launcher.db");
 	private string statsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server_stats.txt");
 	private string lastRecordedStat = "";
 	private Random rnd = new Random();

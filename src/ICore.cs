@@ -47,6 +47,16 @@ internal interface ICore
 	ScanPollResult PollScan(ulong handle, int maxItems);
 
 	void CancelScan(ulong handle);
+
+	void InitStorage(string dbPath, string playtimeTxtPath, string statsTxtPath);
+
+	Dictionary<string, long> LoadAllPlaytime();
+
+	long AddPlaytime(string serverKey, long deltaSeconds);
+
+	void RecordStat(string ip, string port, string recordedAt, int players);
+
+	List<int> GetStats(string ip, string port, int limit);
 }
 
 internal static class CoreFactory

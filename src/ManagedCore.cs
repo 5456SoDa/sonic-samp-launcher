@@ -9,6 +9,10 @@ using System.Text;
 
 internal class ManagedCore : ICore
 {
+	private readonly object storageLock = new object();
+	private string playtimeFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "playtime.txt");
+	private string statsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server_stats.txt");
+	private Dictionary<string, long> fallbackPlaytime = new Dictionary<string, long>();
 	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 	private struct STARTUPINFO
 	{
@@ -487,16 +491,16 @@ internal class ManagedCore : ICore
 					try
 					{
 						int num2 = socket.Receive(array2);
-						if (num2 > 12 && array2[11] == 120)
+						if (num2 >= 13 && array2[10] == 120)
 						{
-							int num3 = array2[12] | (array2[13] << 8);
-							if (num3 > num2 - 14)
+							int num3 = array2[11] | (array2[12] << 8);
+							if (num3 > num2 - 13)
 							{
-								num3 = num2 - 14;
+								num3 = num2 - 13;
 							}
 							if (num3 > 0)
 							{
-								stringBuilder.AppendLine(Encoding.GetEncoding(874).GetString(array2, 14, num3));
+								stringBuilder.AppendLine(Encoding.GetEncoding(874).GetString(array2, 13, num3));
 							}
 						}
 					}
@@ -620,5 +624,158 @@ internal class ManagedCore : ICore
 			}
 			CloseHandle(hProc);
 		}
+	}
+
+	public void InitStorage(string dbPath, string playtimeTxtPath, string statsTxtPath)
+	{
+		lock (storageLock)
+		{
+			if (!string.IsNullOrEmpty(playtimeTxtPath))
+			{
+				playtimeFilePath = playtimeTxtPath;
+			}
+			if (!string.IsNullOrEmpty(statsTxtPath))
+			{
+				statsFilePath = statsTxtPath;
+			}
+		}
+	}
+
+	public Dictionary<string, long> LoadAllPlaytime()
+	{
+		Dictionary<string, long> map = new Dictionary<string, long>();
+		lock (storageLock)
+		{
+			try
+			{
+				if (File.Exists(playtimeFilePath))
+				{
+					string[] lines = File.ReadAllLines(playtimeFilePath, Encoding.UTF8);
+					bool dirty = false;
+					foreach (string raw in lines)
+					{
+						string s = raw.Trim();
+						if (s.Length == 0) continue;
+						string[] parts = s.Split('|');
+						long secs;
+						if (parts.Length >= 3 && long.TryParse(parts[2], out secs) && secs > 0)
+						{
+							map[parts[0] + "|" + parts[1]] = secs;
+						}
+						else
+						{
+							dirty = true;
+						}
+					}
+					fallbackPlaytime = new Dictionary<string, long>(map);
+					if (dirty)
+					{
+						SaveLegacyPlaytimeLocked();
+					}
+				}
+			}
+			catch
+			{
+			}
+		}
+		return map;
+	}
+
+	public long AddPlaytime(string serverKey, long deltaSeconds)
+	{
+		lock (storageLock)
+		{
+			long cur = fallbackPlaytime.ContainsKey(serverKey) ? fallbackPlaytime[serverKey] : 0L;
+			if (deltaSeconds > 0)
+			{
+				cur += deltaSeconds;
+				fallbackPlaytime[serverKey] = cur;
+				SaveLegacyPlaytimeLocked();
+			}
+			return cur;
+		}
+	}
+
+	private void SaveLegacyPlaytimeLocked()
+	{
+		try
+		{
+			StringBuilder sb = new StringBuilder();
+			foreach (KeyValuePair<string, long> kv in fallbackPlaytime)
+			{
+				sb.Append(kv.Key).Append('|').Append(kv.Value).Append("\r\n");
+			}
+			string tmp = playtimeFilePath + ".tmp";
+			File.WriteAllText(tmp, sb.ToString(), Encoding.UTF8);
+			if (File.Exists(playtimeFilePath))
+			{
+				File.Replace(tmp, playtimeFilePath, null);
+			}
+			else
+			{
+				File.Move(tmp, playtimeFilePath);
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	public void RecordStat(string ip, string port, string recordedAt, int players)
+	{
+		lock (storageLock)
+		{
+			try
+			{
+				FileInfo fi = new FileInfo(statsFilePath);
+				if (fi.Exists && fi.Length > 300000)
+				{
+					string[] all = File.ReadAllLines(statsFilePath);
+					int keep = 3000;
+					if (all.Length > keep)
+					{
+						string[] tail = new string[keep];
+						Array.Copy(all, all.Length - keep, tail, 0, keep);
+						File.WriteAllLines(statsFilePath, tail);
+					}
+				}
+				File.AppendAllText(statsFilePath, ip + "|" + port + "|" + recordedAt + "|" + players + "\r\n", Encoding.UTF8);
+			}
+			catch
+			{
+			}
+		}
+	}
+
+	public List<int> GetStats(string ip, string port, int limit)
+	{
+		List<int> list = new List<int>();
+		lock (storageLock)
+		{
+			try
+			{
+				if (File.Exists(statsFilePath))
+				{
+					string[] all = File.ReadAllLines(statsFilePath);
+					foreach (string line in all)
+					{
+						string[] parts = line.Split('|');
+						int val;
+						if (parts.Length >= 4 && parts[0] == ip && parts[1] == port && int.TryParse(parts[3], out val))
+						{
+							list.Add(val);
+						}
+					}
+				}
+			}
+			catch
+			{
+			}
+		}
+		if (limit > 0 && list.Count > limit)
+		{
+			return list.GetRange(list.Count - limit, limit);
+		}
+		return list;
 	}
 }

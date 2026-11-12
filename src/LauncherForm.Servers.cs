@@ -1419,20 +1419,7 @@ internal partial class LauncherForm
 				return;
 			}
 			lastRecordedStat = newEntry;
-
-			FileInfo fileInfo = new FileInfo(statsPath);
-			if (fileInfo.Exists && fileInfo.Length > 300000)
-			{
-				string[] array = File.ReadAllLines(statsPath);
-				int num = 3000;
-				if (array.Length > num)
-				{
-					string[] array2 = new string[num];
-					Array.Copy(array, array.Length - num, array2, 0, num);
-					File.WriteAllLines(statsPath, array2);
-				}
-			}
-			File.AppendAllText(statsPath, newEntry + "\r\n", Encoding.UTF8);
+			core.RecordStat(ip, port, newStamp, players);
 		}
 		catch
 		{
@@ -1470,19 +1457,7 @@ internal partial class LauncherForm
 		List<int> list = new List<int>();
 		try
 		{
-			if (File.Exists(statsPath))
-			{
-				string[] array = File.ReadAllLines(statsPath);
-				foreach (string text in array)
-				{
-					string[] array2 = text.Split('|');
-					int result;
-					if (array2.Length >= 4 && array2[0] == serverEntry.Ip && array2[1] == serverEntry.Port && int.TryParse(array2[3], out result))
-					{
-						list.Add(result);
-					}
-				}
-			}
+			list = core.GetStats(serverEntry.Ip, serverEntry.Port, 500);
 		}
 		catch
 		{
@@ -1528,7 +1503,6 @@ internal partial class LauncherForm
 		}
 		if (hadServer)
 		{
-			SavePlaytime();
 			DiscordRpc.UpdateLauncherPresence();
 		}
 	}
@@ -1556,42 +1530,20 @@ internal partial class LauncherForm
 				StopPlaytime();
 				return;
 			}
+			long total = core.AddPlaytime(text, 30L);
 			lock (ptLock)
 			{
 				if (ptServer == text)
 				{
-					playtime[text] = (playtime.ContainsKey(text) ? (playtime[text] + 30) : 30);
+					if (total > 0)
+					{
+						playtime[text] = total;
+					}
+					else
+					{
+						playtime[text] = (playtime.ContainsKey(text) ? (playtime[text] + 30) : 30);
+					}
 				}
-			}
-			SavePlaytime();
-		}
-		catch
-		{
-		}
-	}
-
-	private void SavePlaytime()
-	{
-		try
-		{
-			StringBuilder stringBuilder = new StringBuilder();
-			lock (ptLock)
-			{
-				foreach (KeyValuePair<string, long> item in playtime)
-				{
-					stringBuilder.Append(item.Key).Append('|').Append(item.Value)
-						.Append("\r\n");
-				}
-			}
-			string tmp = playtimeFile + ".tmp";
-			File.WriteAllText(tmp, stringBuilder.ToString(), Encoding.UTF8);
-			if (File.Exists(playtimeFile))
-			{
-				File.Replace(tmp, playtimeFile, null);
-			}
-			else
-			{
-				File.Move(tmp, playtimeFile);
 			}
 		}
 		catch
@@ -1603,34 +1555,18 @@ internal partial class LauncherForm
 	{
 		try
 		{
-			if (!File.Exists(playtimeFile))
-			{
-				return;
-			}
-			string[] array = File.ReadAllLines(playtimeFile, Encoding.UTF8);
-			bool hasCorrupted = false;
+			core.InitStorage(dbPath, playtimeFile, statsPath);
+			Dictionary<string, long> loaded = core.LoadAllPlaytime();
 			lock (ptLock)
 			{
 				playtime.Clear();
-				foreach (string raw in array)
+				foreach (KeyValuePair<string, long> kv in loaded)
 				{
-					string text = raw.Trim();
-					if (text.Length == 0) continue;
-					string[] array2 = text.Split('|');
-					long result;
-					if (array2.Length >= 3 && long.TryParse(array2[2], out result) && result > 0)
+					if (kv.Value > 0)
 					{
-						playtime[array2[0] + "|" + array2[1]] = result;
-					}
-					else
-					{
-						hasCorrupted = true;
+						playtime[kv.Key] = kv.Value;
 					}
 				}
-			}
-			if (hasCorrupted)
-			{
-				SavePlaytime();
 			}
 		}
 		catch

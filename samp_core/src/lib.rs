@@ -1,12 +1,15 @@
+mod db;
 mod inject;
 mod protocol;
 mod public_list;
 mod query;
+mod rcon;
 
 use query::ServerTarget;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
 use std::ptr::null_mut;
 
 unsafe fn read_cstr(ptr: *const c_char) -> Option<String> {
@@ -167,4 +170,106 @@ pub extern "C" fn core_scan_cancel(handle: u64) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         query::remove_scan(handle);
     }));
+}
+
+#[no_mangle]
+pub extern "C" fn core_rcon_send(
+    host: *const c_char,
+    port: u16,
+    pass: *const c_char,
+    cmd: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(h) = read_cstr(host) else {
+            return into_cstr("ข้อมูล host ไม่ครบ".into());
+        };
+        let p = read_cstr(pass).unwrap_or_default();
+        let c = read_cstr(cmd).unwrap_or_default();
+        into_cstr(rcon::rcon_send_sync(&h, port, &p, &c))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_init(
+    db_path: *const c_char,
+    playtime_txt_path: *const c_char,
+    stats_txt_path: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(dbp) = read_cstr(db_path).filter(|s| !s.is_empty()) else {
+            return into_cstr("db_path ว่าง".into());
+        };
+        let pt_opt = read_cstr(playtime_txt_path).filter(|s| !s.is_empty());
+        let st_opt = read_cstr(stats_txt_path).filter(|s| !s.is_empty());
+        match db::init_db(
+            Path::new(&dbp),
+            pt_opt.as_deref().map(Path::new),
+            st_opt.as_deref().map(Path::new),
+        ) {
+            Ok(()) => null_mut(),
+            Err(e) => into_cstr(e),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_add_playtime(server_key: *const c_char, delta_seconds: i64) -> i64 {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        let Some(k) = read_cstr(server_key).filter(|s| !s.is_empty()) else {
+            return -1;
+        };
+        db::add_playtime(&k, delta_seconds).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_get_all_playtime() -> *mut c_char {
+    guard_ptr(|| match db::get_all_playtime() {
+        Ok(map) => serde_json::to_string(&map)
+            .map(into_cstr)
+            .unwrap_or(null_mut()),
+        Err(_) => null_mut(),
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_record_stat(
+    ip: *const c_char,
+    port: *const c_char,
+    recorded_at: *const c_char,
+    players: i32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        let (Some(i), Some(p), Some(t)) = (read_cstr(ip), read_cstr(port), read_cstr(recorded_at))
+        else {
+            return -1;
+        };
+        match db::record_stat(&i, &p, &t, players) {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(_) => -1,
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_get_stats(
+    ip: *const c_char,
+    port: *const c_char,
+    limit: u32,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let (Some(i), Some(p)) = (read_cstr(ip), read_cstr(port)) else {
+            return null_mut();
+        };
+        let cap = if limit == 0 { 500 } else { limit as usize };
+        match db::get_stats(&i, &p, cap) {
+            Ok(list) => serde_json::to_string(&list)
+                .map(into_cstr)
+                .unwrap_or(null_mut()),
+            Err(_) => null_mut(),
+        }
+    })
 }

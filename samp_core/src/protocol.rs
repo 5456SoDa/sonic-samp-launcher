@@ -32,7 +32,6 @@ pub fn decode_cp874(bytes: &[u8]) -> String {
     cow.into_owned()
 }
 
-#[allow(dead_code)]
 pub fn encode_cp874(s: &str) -> Vec<u8> {
     let (cow, _, _) = WINDOWS_874.encode(s);
     cow.into_owned()
