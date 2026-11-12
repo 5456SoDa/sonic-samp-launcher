@@ -53,6 +53,75 @@ internal class SnapshotInfo
 	public List<string> SkippedLargeFiles = new List<string>();
 }
 
+internal class AssetIssue
+{
+	public string Severity = "warn";
+	public string Kind = "";
+	public string RelPath = "";
+	public string Message = "";
+}
+
+internal class AssetScanReport
+{
+	public int ScannedFiles;
+	public int DffCount;
+	public int TxdCount;
+	public int ImgCount;
+	public int TextureCount;
+	public int ErrorCount;
+	public int WarnCount;
+	public int DuplicateCount;
+	public List<AssetIssue> Issues = new List<AssetIssue>();
+}
+
+internal class ModLoaderFolder
+{
+	public string Name = "";
+	public bool Enabled = true;
+	public int FileCount;
+	public long TotalBytes;
+}
+
+internal class ModLoaderState
+{
+	public bool Installed;
+	public string Profile = "Default";
+	public bool IgnoreAll;
+	public List<ModLoaderFolder> Folders = new List<ModLoaderFolder>();
+}
+
+internal class CrashInfo
+{
+	public string Timestamp = "";
+	public string ExceptionCode = "";
+	public string ExceptionName = "";
+	public string FaultAddress = "";
+	public string ModuleName = "";
+	public string ModuleOffset = "";
+	public string ThaiExplanation = "";
+	public string Suggestion = "";
+	public long WorkingSetMb;
+	public long VirtualMemMb;
+	public List<string> LoadedModules = new List<string>();
+}
+
+internal class TelemetryData
+{
+	public int Pid;
+	public long WorkingSetMb;
+	public long PeakWorkingSetMb;
+	public long PrivateBytesMb;
+	public long VirtualMemMb;
+	public string Timestamp = "";
+}
+
+internal class GuardRuntimeStatus
+{
+	public bool HasCrash;
+	public CrashInfo Crash;
+	public TelemetryData Telemetry;
+}
+
 internal interface ICore
 {
 	string EngineName { get; }
@@ -100,6 +169,16 @@ internal interface ICore
 	string RestoreSnapshot(string gameDir, string snapshotId);
 
 	void DeleteSnapshot(string gameDir, string snapshotId);
+
+	AssetScanReport ScanAssets(string gameDir);
+
+	ModLoaderState GetModLoaderState(string gameDir);
+
+	string SaveModLoaderState(string gameDir, bool ignoreAll, List<string> disabledFolders);
+
+	GuardRuntimeStatus GetGuardStatus(string gameDir);
+
+	void ClearLatestCrash(string gameDir);
 
 	void CloseDb();
 }

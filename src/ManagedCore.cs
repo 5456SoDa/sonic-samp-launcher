@@ -903,6 +903,30 @@ internal class ManagedCore : ICore
 		throw new Exception("ต้องใช้งาน samp_core.dll");
 	}
 
+	public AssetScanReport ScanAssets(string gameDir)
+	{
+		return new AssetScanReport();
+	}
+
+	public ModLoaderState GetModLoaderState(string gameDir)
+	{
+		return new ModLoaderState();
+	}
+
+	public string SaveModLoaderState(string gameDir, bool ignoreAll, List<string> disabledFolders)
+	{
+		return "ต้องใช้งาน samp_core.dll สำหรับตั้งค่า ModLoader";
+	}
+
+	public GuardRuntimeStatus GetGuardStatus(string gameDir)
+	{
+		return new GuardRuntimeStatus();
+	}
+
+	public void ClearLatestCrash(string gameDir)
+	{
+	}
+
 	public void CloseDb()
 	{
 	}

@@ -82,6 +82,21 @@ internal class RustCore : ICore
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	private static extern void core_db_close();
 
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_assets_scan(byte[] gameDir);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_modloader_get(byte[] gameDir);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_modloader_save(byte[] gameDir, [MarshalAs(UnmanagedType.U1)] bool ignoreAll, byte[] disabledJson);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_guard_status(byte[] gameDir);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_crash_clear(byte[] gameDir);
+
 	public string EngineName
 	{
 		get { return engineVersion; }
@@ -640,6 +655,166 @@ internal class RustCore : ICore
 		if (!string.IsNullOrEmpty(err))
 		{
 			throw new Exception(err);
+		}
+	}
+
+	public AssetScanReport ScanAssets(string gameDir)
+	{
+		IntPtr ptr = core_assets_scan(ToUtf8(gameDir));
+		string json = TakeOwnedStr(ptr);
+		AssetScanReport report = new AssetScanReport();
+		if (string.IsNullOrEmpty(json))
+		{
+			return report;
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			return report;
+		}
+		report.ScannedFiles = GetInt(d, "scanned_files", 0);
+		report.DffCount = GetInt(d, "dff_count", 0);
+		report.TxdCount = GetInt(d, "txd_count", 0);
+		report.ImgCount = GetInt(d, "img_count", 0);
+		report.TextureCount = GetInt(d, "texture_count", 0);
+		report.ErrorCount = GetInt(d, "error_count", 0);
+		report.WarnCount = GetInt(d, "warn_count", 0);
+		report.DuplicateCount = GetInt(d, "duplicate_count", 0);
+
+		object rawIssues;
+		if (d.TryGetValue("issues", out rawIssues))
+		{
+			IList list = rawIssues as IList;
+			if (list != null)
+			{
+				foreach (object item in list)
+				{
+					Dictionary<string, object> id = item as Dictionary<string, object>;
+					if (id != null)
+					{
+						AssetIssue issue = new AssetIssue();
+						issue.Severity = GetStr(id, "severity");
+						issue.Kind = GetStr(id, "kind");
+						issue.RelPath = GetStr(id, "rel_path");
+						issue.Message = GetStr(id, "message");
+						report.Issues.Add(issue);
+					}
+				}
+			}
+		}
+		return report;
+	}
+
+	public ModLoaderState GetModLoaderState(string gameDir)
+	{
+		IntPtr ptr = core_modloader_get(ToUtf8(gameDir));
+		string json = TakeOwnedStr(ptr);
+		ModLoaderState state = new ModLoaderState();
+		if (string.IsNullOrEmpty(json))
+		{
+			return state;
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			return state;
+		}
+		state.Installed = GetBool(d, "installed");
+		state.Profile = GetStr(d, "profile");
+		if (string.IsNullOrEmpty(state.Profile)) state.Profile = "Default";
+		state.IgnoreAll = GetBool(d, "ignore_all");
+
+		object rawFolders;
+		if (d.TryGetValue("folders", out rawFolders))
+		{
+			IList list = rawFolders as IList;
+			if (list != null)
+			{
+				foreach (object item in list)
+				{
+					Dictionary<string, object> fd = item as Dictionary<string, object>;
+					if (fd != null)
+					{
+						ModLoaderFolder folder = new ModLoaderFolder();
+						folder.Name = GetStr(fd, "name");
+						folder.Enabled = GetBool(fd, "enabled");
+						folder.FileCount = GetInt(fd, "file_count", 0);
+						folder.TotalBytes = GetLong(fd, "total_bytes", 0);
+						state.Folders.Add(folder);
+					}
+				}
+			}
+		}
+		return state;
+	}
+
+	public string SaveModLoaderState(string gameDir, bool ignoreAll, List<string> disabledFolders)
+	{
+		JavaScriptSerializer js = new JavaScriptSerializer();
+		string disJson = js.Serialize(disabledFolders ?? new List<string>());
+		IntPtr ptr = core_modloader_save(ToUtf8(gameDir), ignoreAll, ToUtf8(disJson));
+		string err = TakeOwnedStr(ptr);
+		return err;
+	}
+
+	public GuardRuntimeStatus GetGuardStatus(string gameDir)
+	{
+		IntPtr ptr = core_guard_status(ToUtf8(gameDir));
+		string json = TakeOwnedStr(ptr);
+		GuardRuntimeStatus st = new GuardRuntimeStatus();
+		if (string.IsNullOrEmpty(json))
+		{
+			return st;
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			return st;
+		}
+		st.HasCrash = GetBool(d, "has_crash");
+
+		Dictionary<string, object> cd = GetDict(d, "crash");
+		if (cd != null)
+		{
+			CrashInfo ci = new CrashInfo();
+			ci.Timestamp = GetStr(cd, "timestamp");
+			ci.ExceptionCode = GetStr(cd, "exception_code");
+			ci.ExceptionName = GetStr(cd, "exception_name");
+			ci.FaultAddress = GetStr(cd, "fault_address");
+			ci.ModuleName = GetStr(cd, "module_name");
+			ci.ModuleOffset = GetStr(cd, "module_offset");
+			ci.ThaiExplanation = GetStr(cd, "thai_explanation");
+			ci.Suggestion = GetStr(cd, "suggestion");
+			ci.WorkingSetMb = GetLong(cd, "working_set_mb", 0);
+			ci.VirtualMemMb = GetLong(cd, "virtual_mem_mb", 0);
+			ci.LoadedModules = GetStrList(cd, "loaded_modules");
+			st.Crash = ci;
+		}
+
+		Dictionary<string, object> td = GetDict(d, "telemetry");
+		if (td != null)
+		{
+			TelemetryData t = new TelemetryData();
+			t.Pid = GetInt(td, "pid", 0);
+			t.WorkingSetMb = GetLong(td, "working_set_mb", 0);
+			t.PeakWorkingSetMb = GetLong(td, "peak_working_set_mb", 0);
+			t.PrivateBytesMb = GetLong(td, "private_bytes_mb", 0);
+			t.VirtualMemMb = GetLong(td, "virtual_mem_mb", 0);
+			t.Timestamp = GetStr(td, "timestamp");
+			st.Telemetry = t;
+		}
+
+		return st;
+	}
+
+	public void ClearLatestCrash(string gameDir)
+	{
+		try
+		{
+			core_crash_clear(ToUtf8(gameDir));
+		}
+		catch
+		{
 		}
 	}
 

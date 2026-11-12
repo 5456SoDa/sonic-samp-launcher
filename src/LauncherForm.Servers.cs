@@ -1571,6 +1571,7 @@ internal partial class LauncherForm
 							else
 							{
 								SetStatus("พร้อมเชื่อมต่อ");
+								CheckPostGameCrash();
 							}
 						});
 					}

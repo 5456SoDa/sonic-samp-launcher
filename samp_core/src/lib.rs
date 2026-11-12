@@ -1,7 +1,10 @@
+mod assets;
 mod backup;
+mod crash;
 mod db;
 mod health;
 mod inject;
+mod modloader_cfg;
 mod protocol;
 mod public_list;
 mod query;
@@ -381,4 +384,77 @@ pub extern "C" fn core_snapshot_delete(
 #[no_mangle]
 pub extern "C" fn core_db_close() {
     let _ = std::panic::catch_unwind(db::close_db);
+}
+
+#[no_mangle]
+pub extern "C" fn core_assets_scan(game_dir: *const c_char) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return null_mut();
+        };
+        let rep = assets::scan_game_assets(Path::new(&gd));
+        serde_json::to_string(&rep)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_modloader_get(game_dir: *const c_char) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return null_mut();
+        };
+        match modloader_cfg::list_modloader_state(Path::new(&gd)) {
+            Ok(st) => serde_json::to_string(&st)
+                .ok()
+                .map(into_cstr)
+                .unwrap_or(null_mut()),
+            Err(e) => into_cstr(format!("{{\"error\":\"{}\"}}", e.replace('"', "\\\""))),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_modloader_save(
+    game_dir: *const c_char,
+    ignore_all: bool,
+    disabled_json: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return into_cstr("ไม่ระบุโฟลเดอร์เกม".into());
+        };
+        let dis_vec: Vec<String> = read_cstr(disabled_json)
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        match modloader_cfg::save_modloader_state(Path::new(&gd), ignore_all, &dis_vec) {
+            Ok(()) => null_mut(),
+            Err(e) => into_cstr(e),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_guard_status(game_dir: *const c_char) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return null_mut();
+        };
+        let st = crash::get_guard_status(Path::new(&gd));
+        serde_json::to_string(&st)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_crash_clear(game_dir: *const c_char) {
+    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+        if let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) {
+            crash::clear_latest_crash(Path::new(&gd));
+        }
+    }));
 }

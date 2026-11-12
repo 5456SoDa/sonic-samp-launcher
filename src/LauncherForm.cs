@@ -44,6 +44,7 @@ internal partial class LauncherForm : Form
 	private RoundedBtn btnNavChat;
 	private RoundedBtn btnNavGal;
 	private RoundedBtn btnNavRcon;
+	private RoundedBtn btnNavMods;
 
 	private Panel pnlChat;
 	private RichTextBox txtChatLog;
@@ -55,6 +56,7 @@ internal partial class LauncherForm : Form
 	private Panel pnlSet;
 	private Panel pnlGal;
 	private Panel pnlRcon;
+	private Panel pnlMods;
 
 	private TextBox txtNick;
 	private TextBox txtIp;
@@ -352,18 +354,21 @@ internal partial class LauncherForm : Form
 		btnNavGal = MakeNav("   🖼  แกลเลอรี", 140);
 		btnNavSet = MakeNav("   ⚙  ตั้งค่า", 182);
 		btnNavRcon = MakeNav("   🛠  RCON", 224);
+		btnNavMods = MakeNav("   🧩  ม็อด & ตัวช่วย", 266);
 		btnNavPlay.Click += delegate { ShowPage(0); };
 		btnNavSrv.Click += delegate { ShowPage(1); };
 		btnNavChat.Click += delegate { ShowPage(2); };
 		btnNavGal.Click += delegate { ShowPage(3); };
 		btnNavSet.Click += delegate { ShowPage(4); };
 		btnNavRcon.Click += delegate { ShowPage(5); };
+		btnNavMods.Click += delegate { ShowPage(6); };
 		panel.Controls.Add(btnNavPlay);
 		panel.Controls.Add(btnNavSrv);
 		panel.Controls.Add(btnNavChat);
 		panel.Controls.Add(btnNavGal);
 		panel.Controls.Add(btnNavSet);
 		panel.Controls.Add(btnNavRcon);
+		panel.Controls.Add(btnNavMods);
 		navIndicator = new Panel();
 		navIndicator.Size = new Size(4, 26);
 		navIndicator.Location = new Point(0, 20);
@@ -384,18 +389,21 @@ internal partial class LauncherForm : Form
 		pnlGal = MakePage();
 		pnlSet = MakePage();
 		pnlRcon = MakePage();
+		pnlMods = MakePage();
 		EnableDoubleBuffer(pnlPlay);
 		EnableDoubleBuffer(pnlSrv);
 		EnableDoubleBuffer(pnlChat);
 		EnableDoubleBuffer(pnlGal);
 		EnableDoubleBuffer(pnlSet);
 		EnableDoubleBuffer(pnlRcon);
+		EnableDoubleBuffer(pnlMods);
 		BuildPlayPage();
 		BuildSrvPage();
 		BuildChatPage();
 		BuildGalPage();
 		BuildSetPage();
 		BuildRconPage();
+		BuildModsPage();
 		lblStatus = new Label();
 		lblStatus.Text = "พร้อมเชื่อมต่อ";
 		lblStatus.Font = fSub;
@@ -511,7 +519,10 @@ internal partial class LauncherForm : Form
 		Panel panel;
 		switch (idx)
 		{
-		default:
+		case 6:
+			panel = pnlMods;
+			break;
+		case 5:
 			panel = pnlRcon;
 			break;
 		case 4:
@@ -527,11 +538,12 @@ internal partial class LauncherForm : Form
 			panel = pnlSrv;
 			break;
 		case 0:
+		default:
 			panel = pnlPlay;
 			break;
 		}
 		Panel target = panel;
-		Panel[] array = new Panel[6] { pnlPlay, pnlSrv, pnlChat, pnlGal, pnlSet, pnlRcon };
+		Panel[] array = new Panel[7] { pnlPlay, pnlSrv, pnlChat, pnlGal, pnlSet, pnlRcon, pnlMods };
 		foreach (Panel panel2 in array)
 		{
 			if (panel2 != target)
@@ -547,8 +559,14 @@ internal partial class LauncherForm : Form
 		StyleNav(btnNavGal, idx == 3);
 		StyleNav(btnNavSet, idx == 4);
 		StyleNav(btnNavRcon, idx == 5);
+		StyleNav(btnNavMods, idx == 6);
 
-		RoundedBtn activeBtn = ((idx == 0) ? btnNavPlay : ((idx == 1) ? btnNavSrv : ((idx == 2) ? btnNavChat : ((idx == 3) ? btnNavGal : ((idx == 4) ? btnNavSet : btnNavRcon)))));
+		RoundedBtn activeBtn = (idx == 0) ? btnNavPlay :
+			((idx == 1) ? btnNavSrv :
+			((idx == 2) ? btnNavChat :
+			((idx == 3) ? btnNavGal :
+			((idx == 4) ? btnNavSet :
+			((idx == 5) ? btnNavRcon : btnNavMods)))));
 		if (activeBtn != null && navIndicator != null)
 		{
 			navIndicator.Top = activeBtn.Top + 6;
@@ -587,6 +605,10 @@ internal partial class LauncherForm : Form
 		if (idx == 4)
 		{
 			RunHealthCheck();
+		}
+		if (idx == 6)
+		{
+			RefreshModsPage();
 		}
 	}
 
