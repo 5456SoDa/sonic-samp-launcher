@@ -171,7 +171,13 @@ internal partial class LauncherForm
 
 		AddLbl(pnlHealth, "🛡️  ตรวจสอบระบบ & ตัวเลือกการทำงาน (SYSTEM HEALTH & OPTIONS)", fSub, 14, 8, colAccent);
 
-		lblEngine = AddLbl(pnlHealth, "Engine: " + core.EngineName, fSmall, 382, 10, colSub);
+		btnAutoFix = MakeMiniBtn("⚡ แก้ไขอัตโนมัติ", 392, 6, 130, 26);
+		btnAutoFix.BorderColor = Color.FromArgb(40, 60, 95);
+		btnAutoFix.Click += delegate
+		{
+			RunAutoFix();
+		};
+		pnlHealth.Controls.Add(btnAutoFix);
 
 		RoundedBtn roundedBtn3 = MakeMiniBtn("↻  ตรวจอีกครั้ง", 530, 6, 124, 26);
 		roundedBtn3.BorderColor = colAccent;
@@ -187,6 +193,7 @@ internal partial class LauncherForm
 		lblHealth[2] = AddLbl(pnlHealth, "กำลังตรวจสอบ ModLoader & CLEO...", fSmall, 14, 70, colSub);
 		lblHealth[3] = AddLbl(pnlHealth, "กำลังตรวจสอบ FramerateVigilante...", fSmall, 340, 34, colSub);
 		lblHealth[4] = AddLbl(pnlHealth, "กำลังตรวจสอบ SkyGfx...", fSmall, 340, 52, colSub);
+		lblEngine = AddLbl(pnlHealth, "Engine: " + core.EngineName, fSmall, 340, 70, colSub);
 
 		AddLbl(pnlHealth, "ม็อดหลักที่ทำงาน: FramerateVigilante • ModLoader v0.3.10 • CLEO 4.4 • SkyGfx • SilentPatch • 2DFX", fSmall, 14, 88, colSub);
 
@@ -407,10 +414,23 @@ internal partial class LauncherForm
 	private void RestoreModBackup()
 	{
 		string g = GetGameDir();
+		List<SnapshotInfo> snaps = new List<SnapshotInfo>();
+		try
+		{
+			snaps = core.ListSnapshots(g);
+		}
+		catch
+		{
+		}
+		if (snaps.Count > 0)
+		{
+			ShowSnapshotManager(g, snaps);
+			return;
+		}
 		string b = Path.Combine(g, "_mod_backup");
 		if (!Directory.Exists(b))
 		{
-			ShowErr("ไม่พบโฟลเดอร์ _mod_backup ในโฟลเดอร์เกม");
+			ShowErr("ไม่พบ Snapshot หรือ _mod_backup ในโฟลเดอร์เกม");
 			return;
 		}
 		if (MessageBox.Show(this, "คุณต้องการคืนค่าไฟล์จาก _mod_backup กลับไปยังโฟลเดอร์เกมหรือไม่?\r\n(ไฟล์คอนฟิกเดิมจะถูกนำกลับมาใช้งาน)", "ยืนยันการคืนค่าม็อด", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
@@ -446,28 +466,200 @@ internal partial class LauncherForm
 	private void CreateModBackup()
 	{
 		string g = GetGameDir();
-		string b = Path.Combine(g, "_mod_backup");
-		try
+		string note = AskSnapshotName("Snapshot " + DateTime.Now.ToString("dd/MM HH:mm"));
+		if (note == null)
 		{
-			if (!Directory.Exists(b))
+			return;
+		}
+		SetStatus("กำลังบีบอัด Snapshot ม็อด (.ini/.asi/.cleo/modloader)...");
+		ThreadPool.QueueUserWorkItem(delegate
+		{
+			try
 			{
-				Directory.CreateDirectory(b);
-			}
-			string[] targetFiles = new string[] { "stream.ini", "III.VC.SA.LimitAdjuster.ini", "SALodLights.ini", "skygfx1.ini" };
-			foreach (string tf in targetFiles)
-			{
-				string full = Path.Combine(g, tf);
-				if (File.Exists(full))
+				string summary = core.CreateSnapshot(g, note);
+				if (!base.IsDisposed)
 				{
-					File.Copy(full, Path.Combine(b, tf + ".bak"), true);
+					BeginInvoke((MethodInvoker)delegate
+					{
+						SetStatus(summary);
+						ToastOk(summary);
+					});
 				}
 			}
-			ToastOk("สำรองข้อมูลไฟล์ม็อดเรียบร้อยแล้ว");
-		}
-		catch (Exception ex)
+			catch (Exception ex)
+			{
+				if (!base.IsDisposed)
+				{
+					BeginInvoke((MethodInvoker)delegate
+					{
+						ShowErr("การสำรองข้อมูลล้มเหลว:\r\n" + ex.Message);
+					});
+				}
+			}
+		});
+	}
+
+	private string AskSnapshotName(string defName)
+	{
+		using (Form dlg = new Form())
 		{
-			ShowErr("การสำรองข้อมูลล้มเหลว:\r\n" + ex.Message);
+			dlg.Text = "สร้าง Snapshot สำรองม็อด";
+			dlg.ClientSize = new Size(360, 128);
+			dlg.StartPosition = FormStartPosition.CenterParent;
+			dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+			dlg.MaximizeBox = false;
+			dlg.MinimizeBox = false;
+			dlg.BackColor = colBg;
+			dlg.ForeColor = colText;
+
+			Panel pWrap = new Panel();
+			pWrap.Dock = DockStyle.Fill;
+			pWrap.BackColor = colBg;
+			dlg.Controls.Add(pWrap);
+
+			Label lbl = AddLbl(pWrap, "ชื่อ Snapshot (สำรอง .ini / .asi / .cleo / modloader):", fSmall, 14, 14, colSub);
+			TextBox tb = AddField(pWrap, defName, 14, 36, 332);
+			tb.SelectAll();
+
+			RoundedBtn ok = MakeMiniBtn("💾 สร้าง Snapshot", 174, 82, 172, 30);
+			ok.BorderColor = colOk;
+			RoundedBtn cancel = MakeMiniBtn("ยกเลิก", 14, 82, 92, 30);
+			cancel.BorderColor = colField;
+
+			string result = null;
+			ok.Click += delegate { result = tb.Text.Trim(); dlg.DialogResult = DialogResult.OK; dlg.Close(); };
+			cancel.Click += delegate { dlg.DialogResult = DialogResult.Cancel; dlg.Close(); };
+			dlg.AcceptButton = ok;
+			dlg.CancelButton = cancel;
+			pWrap.Controls.Add(ok);
+			pWrap.Controls.Add(cancel);
+			return (dlg.ShowDialog(this) == DialogResult.OK) ? result : null;
 		}
+	}
+
+	private void ShowSnapshotManager(string gameDir, List<SnapshotInfo> snaps)
+	{
+		using (Form dlg = new Form())
+		{
+			dlg.Text = "จัดการ Snapshot ม็อด (Zstd Deduplicated)";
+			dlg.ClientSize = new Size(520, 310);
+			dlg.StartPosition = FormStartPosition.CenterParent;
+			dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+			dlg.MaximizeBox = false;
+			dlg.MinimizeBox = false;
+			dlg.BackColor = colBg;
+			dlg.ForeColor = colText;
+
+			ListBox lb = new ListBox();
+			lb.Location = new Point(14, 14);
+			lb.Size = new Size(492, 238);
+			lb.BackColor = colCard;
+			lb.ForeColor = colText;
+			lb.BorderStyle = BorderStyle.FixedSingle;
+			lb.Font = fSmall;
+			dlg.Controls.Add(lb);
+
+			MethodInvoker reload = delegate
+			{
+				lb.Items.Clear();
+				snaps = core.ListSnapshots(gameDir);
+				foreach (SnapshotInfo s in snaps)
+				{
+					long rawKb = Math.Max(1, s.TotalRawBytes / 1024);
+					long compKb = Math.Max(1, s.TotalCompressedBytes / 1024);
+					lb.Items.Add(s.Name + "  [" + s.CreatedAt + "]  (" + s.FileCount + " ไฟล์, " + rawKb + " KB → " + compKb + " KB)");
+				}
+				if (lb.Items.Count > 0) lb.SelectedIndex = 0;
+			};
+			reload();
+
+			RoundedBtn btnRest = MakeMiniBtn("↺ กู้คืน Snapshot ที่เลือก", 316, 264, 190, 32);
+			btnRest.BorderColor = colOk;
+			btnRest.Click += delegate
+			{
+				int idx = lb.SelectedIndex;
+				if (idx < 0 || idx >= snaps.Count) return;
+				SnapshotInfo sel = snaps[idx];
+				if (MessageBox.Show(dlg, "กู้คืน Snapshot '" + sel.Name + "' (" + sel.FileCount + " ไฟล์) กลับไปยังโฟลเดอร์เกม?", "ยืนยันการกู้คืน", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+				try
+				{
+					string msg = core.RestoreSnapshot(gameDir, sel.Id);
+					ToastOk(msg);
+					RunHealthCheck();
+					dlg.Close();
+				}
+				catch (Exception ex)
+				{
+					ShowErr(ex.Message);
+				}
+			};
+			dlg.Controls.Add(btnRest);
+
+			RoundedBtn btnDel = MakeMiniBtn("🗑️ ลบ", 14, 264, 90, 32);
+			btnDel.BorderColor = Color.FromArgb(255, 99, 99);
+			btnDel.Click += delegate
+			{
+				int idx = lb.SelectedIndex;
+				if (idx < 0 || idx >= snaps.Count) return;
+				SnapshotInfo sel = snaps[idx];
+				try
+				{
+					core.DeleteSnapshot(gameDir, sel.Id);
+					reload();
+				}
+				catch (Exception ex)
+				{
+					ShowErr(ex.Message);
+				}
+			};
+			dlg.Controls.Add(btnDel);
+
+			RoundedBtn btnClose = MakeMiniBtn("ปิด", 216, 264, 90, 32);
+			btnClose.BorderColor = colField;
+			btnClose.Click += delegate { dlg.Close(); };
+			dlg.Controls.Add(btnClose);
+
+			dlg.ShowDialog(this);
+		}
+	}
+
+	private static Color HealthColor(string status, Color cOk, Color cWarn, Color cBad, Color cSub)
+	{
+		if (status == "ok") return cOk;
+		if (status == "warn") return cWarn;
+		if (status == "bad") return cBad;
+		return cSub;
+	}
+
+	private void RunAutoFix()
+	{
+		string g = GetGameDir();
+		HealthCheckReport rep = lastHealthReport;
+		if (rep != null && rep.FixableCount == 0 && !rep.InProgramFiles && !rep.MissingDx9)
+		{
+			ToastOk("ระบบปกติดี ไม่มีปัญหาที่ต้องซ่อมอัตโนมัติ");
+			return;
+		}
+		if (rep != null && rep.FixableCount > 0)
+		{
+			StringBuilder q = new StringBuilder();
+			q.AppendLine("ต้องการดำเนินการซ่อมอัตโนมัติรายการต่อไปนี้หรือไม่?");
+			if (rep.DuplicateAsis.Count > 0)
+			{
+				q.AppendLine("• ปิดไฟล์ .asi ที่ซ้ำซ้อน (.disabled): " + string.Join(", ", rep.DuplicateAsis.ToArray()));
+			}
+			if (rep.ReadonlyFiles.Count > 0)
+			{
+				q.AppendLine("• ปลดสถานะ Read-Only: " + string.Join(", ", rep.ReadonlyFiles.ToArray()));
+			}
+			if (MessageBox.Show(this, q.ToString(), "แก้ไขอัตโนมัติ (Auto-fix)", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+			{
+				return;
+			}
+		}
+		string msg = core.AutoFixHealth(g);
+		MessageBox.Show(this, msg, "ผลการตรวจซ่อมระบบ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+		RunHealthCheck();
 	}
 
 	private void SetHealth(int i, string s, Color c)
@@ -493,117 +685,35 @@ internal partial class LauncherForm
 		Color cWarn = Color.FromArgb(243, 156, 18);
 		Color cBad = Color.FromArgb(255, 99, 99);
 		string g = GetGameDir();
+		string preset = activeSkyGfx;
 		ThreadPool.QueueUserWorkItem(delegate
 		{
-			// 0. gta_sa.exe
-			string gtaExe = Path.Combine(g, "gta_sa.exe");
-			string r0;
-			Color c0;
-			if (!File.Exists(gtaExe))
-			{
-				r0 = "✖ ไม่พบ gta_sa.exe ในโฟลเดอร์เกม";
-				c0 = cBad;
-			}
-			else
-			{
-				long length = new FileInfo(gtaExe).Length;
-				if (length == 14383616L || length == 14083072L)
-				{
-					r0 = "✓ gta_sa.exe 1.0 US (HOODLUM) สมบูรณ์ รองรับม็อดทุกตัว";
-					c0 = cOk;
-				}
-				else
-				{
-					r0 = "⚠ gta_sa.exe ขนาด " + length + " bytes — ไม่ใช่ 1.0 US มาตรฐาน SA-MP";
-					c0 = cWarn;
-				}
-			}
-
-			// 1. samp.dll
-			string sampFile = Path.Combine(g, "samp.dll");
-			string r1;
-			Color c1;
-			if (File.Exists(sampFile))
-			{
-				long sLen = new FileInfo(sampFile).Length;
-				string sVer = ((sLen == 2199552L) ? "0.3.7 R1" : ((sLen == 2244608L) ? "0.3.7 R2" : "0.3.7"));
-				r1 = "✓ พบ samp.dll (SA-MP " + sVer + " พร้อมใช้งาน)";
-				c1 = cOk;
-			}
-			else
-			{
-				r1 = "✖ ไม่พบ samp.dll — ต้องติดตั้ง SA-MP ในโฟลเดอร์เกม";
-				c1 = cBad;
-			}
-
-			// 2. ASI Loader & ModLoader & CLEO
-			bool hasAsi = File.Exists(Path.Combine(g, "dinput8.dll"));
-			bool hasMl = File.Exists(Path.Combine(g, "modloader.asi"));
-			bool hasCleo = File.Exists(Path.Combine(g, "CLEO.asi"));
-			string r2;
-			Color c2;
-			if (hasAsi && hasMl && hasCleo)
-			{
-				r2 = "✓ ASI Loader + ModLoader (v0.3.10) + CLEO 4.4 พร้อมลงม็อด";
-				c2 = cOk;
-			}
-			else if (hasAsi && hasMl)
-			{
-				r2 = "✓ ASI Loader + ModLoader ทำงาน";
-				c2 = cOk;
-			}
-			else if (hasAsi)
-			{
-				r2 = "✓ ASI Loader (dinput8.dll) ทำงาน";
-				c2 = cOk;
-			}
-			else
-			{
-				r2 = "⚠ ไม่มี ASI Loader (dinput8.dll) — ม็อดจะไม่ทำงาน";
-				c2 = cWarn;
-			}
-
-			// 3. FramerateVigilante & FPS
-			bool hasFv = File.Exists(Path.Combine(g, "scripts", "FramerateVigilante.asi"));
-			string r3;
-			Color c3;
-			if (hasFv)
-			{
-				r3 = "✓ FramerateVigilante ทำงาน (ฟิสิกส์ 60-144 FPS ปลอดภัย ไม่พังบั๊ก)";
-				c3 = cOk;
-			}
-			else
-			{
-				r3 = "⚠ ไม่พบ FramerateVigilante — เล่นเกิน 30 FPS อาจเจอบั๊กฟิสิกส์";
-				c3 = cWarn;
-			}
-
-			// 4. SkyGfx preset
-			string sgIni = Path.Combine(g, "skygfx.ini");
-			string r4;
-			Color c4;
-			if (File.Exists(sgIni))
-			{
-				r4 = "✓ SkyGfx ระบบแสงเงาและภาพสะท้อนรถทำงาน (พรีเซ็ต: " + activeSkyGfx.ToUpper() + ")";
-				c4 = cOk;
-			}
-			else
-			{
-				r4 = "– SkyGfx ปิดการทำงาน (ใช้กราฟิกต้นฉบับ)";
-				c4 = colSub;
-			}
-
+			HealthCheckReport rep = core.CheckHealth(g, preset);
 			try
 			{
 				if (!base.IsDisposed)
 				{
 					BeginInvoke((MethodInvoker)delegate
 					{
-						SetHealth(0, r0, c0);
-						SetHealth(1, r1, c1);
-						SetHealth(2, r2, c2);
-						SetHealth(3, r3, c3);
-						SetHealth(4, r4, c4);
+						lastHealthReport = rep;
+						SetHealth(0, rep.GtaMsg, HealthColor(rep.GtaStatus, cOk, cWarn, cBad, colSub));
+						SetHealth(1, rep.SampMsg, HealthColor(rep.SampStatus, cOk, cWarn, cBad, colSub));
+						SetHealth(2, rep.ModsMsg, HealthColor(rep.ModsStatus, cOk, cWarn, cBad, colSub));
+						SetHealth(3, rep.EnvMsg, HealthColor(rep.EnvStatus, cOk, cWarn, cBad, colSub));
+						SetHealth(4, rep.GfxMsg, HealthColor(rep.GfxStatus, cOk, cWarn, cBad, colSub));
+						if (btnAutoFix != null && !btnAutoFix.IsDisposed)
+						{
+							if (rep.FixableCount > 0)
+							{
+								btnAutoFix.Text = "⚡ แก้ไข (" + rep.FixableCount + ")";
+								btnAutoFix.BorderColor = cWarn;
+							}
+							else
+							{
+								btnAutoFix.Text = "⚡ แก้ไขอัตโนมัติ";
+								btnAutoFix.BorderColor = Color.FromArgb(40, 60, 95);
+							}
+						}
 					});
 				}
 			}

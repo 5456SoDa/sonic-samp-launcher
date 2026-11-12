@@ -61,6 +61,24 @@ internal class RustCore : ICore
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	private static extern IntPtr core_db_get_stats(byte[] ip, byte[] port, uint limit);
 
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_health_check(byte[] gameDir, byte[] skygfxPreset);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_health_autofix(byte[] gameDir);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_snapshot_create(byte[] gameDir, byte[] name);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_snapshot_list(byte[] gameDir);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_snapshot_restore(byte[] gameDir, byte[] snapshotId);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_snapshot_delete(byte[] gameDir, byte[] snapshotId);
+
 	public string EngineName
 	{
 		get { return engineVersion; }
@@ -427,6 +445,238 @@ internal class RustCore : ICore
 		{
 		}
 		return list;
+	}
+
+	public HealthCheckReport CheckHealth(string gameDir, string skyGfxPreset)
+	{
+		string json = TakeOwnedStr(core_health_check(ToUtf8(gameDir), ToUtf8(skyGfxPreset ?? "ps2")));
+		if (string.IsNullOrEmpty(json))
+		{
+			return fallback.CheckHealth(gameDir, skyGfxPreset);
+		}
+		try
+		{
+			JavaScriptSerializer js = new JavaScriptSerializer();
+			Dictionary<string, object> d = js.Deserialize<Dictionary<string, object>>(json);
+			if (d == null)
+			{
+				return fallback.CheckHealth(gameDir, skyGfxPreset);
+			}
+			HealthCheckReport r = new HealthCheckReport();
+			r.GtaStatus = GetStr(d, "gta_status");
+			r.GtaMsg = GetStr(d, "gta_msg");
+			r.SampStatus = GetStr(d, "samp_status");
+			r.SampMsg = GetStr(d, "samp_msg");
+			r.ModsStatus = GetStr(d, "mods_status");
+			r.ModsMsg = GetStr(d, "mods_msg");
+			r.EnvStatus = GetStr(d, "env_status");
+			r.EnvMsg = GetStr(d, "env_msg");
+			r.GfxStatus = GetStr(d, "gfx_status");
+			r.GfxMsg = GetStr(d, "gfx_msg");
+			r.DuplicateAsis = GetStrList(d, "duplicate_asis");
+			r.ReadonlyFiles = GetStrList(d, "readonly_files");
+			r.InProgramFiles = GetBool(d, "in_program_files");
+			r.MissingDx9 = GetBool(d, "missing_dx9");
+			r.FixableCount = GetInt(d, "fixable_count", 0);
+			return r;
+		}
+		catch
+		{
+			return fallback.CheckHealth(gameDir, skyGfxPreset);
+		}
+	}
+
+	public string AutoFixHealth(string gameDir)
+	{
+		string json = TakeOwnedStr(core_health_autofix(ToUtf8(gameDir)));
+		if (string.IsNullOrEmpty(json))
+		{
+			return fallback.AutoFixHealth(gameDir);
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			return "เกิดข้อผิดพลาดในการซ่อมอัตโนมัติ";
+		}
+		if (!GetBool(d, "ok"))
+		{
+			return GetStr(d, "error");
+		}
+		Dictionary<string, object> data = GetDict(d, "data");
+		if (data == null)
+		{
+			return "ดำเนินการเสร็จสิ้น";
+		}
+		int ro = GetInt(data, "fixed_readonly", 0);
+		List<string> dis = GetStrList(data, "disabled_duplicates");
+		List<string> rem = GetStrList(data, "remaining_warnings");
+		StringBuilder sb = new StringBuilder();
+		sb.AppendLine("ซ่อมแซมอัตโนมัติเรียบร้อย:");
+		sb.AppendLine("• ปลดล็อกไฟล์ Read-Only: " + ro + " ไฟล์");
+		sb.AppendLine("• ปิด .asi ที่ซ้ำซ้อน (.disabled): " + dis.Count + " ไฟล์");
+		if (rem.Count > 0)
+		{
+			sb.AppendLine();
+			sb.AppendLine("หมายเหตุเพิ่มเติม:");
+			foreach (string w in rem)
+			{
+				sb.AppendLine("  - " + w);
+			}
+		}
+		return sb.ToString().TrimEnd();
+	}
+
+	public string CreateSnapshot(string gameDir, string name)
+	{
+		string json = TakeOwnedStr(core_snapshot_create(ToUtf8(gameDir), ToUtf8(name ?? "")));
+		if (string.IsNullOrEmpty(json))
+		{
+			return fallback.CreateSnapshot(gameDir, name);
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			throw new Exception("สร้าง Snapshot ไม่สำเร็จ");
+		}
+		if (!GetBool(d, "ok"))
+		{
+			throw new Exception(GetStr(d, "error"));
+		}
+		Dictionary<string, object> s = GetDict(d, "data");
+		if (s == null)
+		{
+			return "สำรอง Snapshot เรียบร้อยแล้ว";
+		}
+		int files = GetInt(s, "file_count", 0);
+		long raw = GetLong(s, "total_raw_bytes", 0);
+		long comp = GetLong(s, "total_compressed_bytes", 0);
+		return string.Format("สำรอง '{0}' ({1} ไฟล์: {2} KB → {3} KB zstd)",
+			GetStr(s, "name"), files, Math.Max(1, raw / 1024), Math.Max(1, comp / 1024));
+	}
+
+	public List<SnapshotInfo> ListSnapshots(string gameDir)
+	{
+		string json = TakeOwnedStr(core_snapshot_list(ToUtf8(gameDir)));
+		List<SnapshotInfo> list = new List<SnapshotInfo>();
+		if (string.IsNullOrEmpty(json))
+		{
+			return list;
+		}
+		try
+		{
+			JavaScriptSerializer js = new JavaScriptSerializer();
+			IList arr = js.DeserializeObject(json) as IList;
+			if (arr != null)
+			{
+				foreach (object o in arr)
+				{
+					Dictionary<string, object> sd = o as Dictionary<string, object>;
+					if (sd != null)
+					{
+						SnapshotInfo info = new SnapshotInfo();
+						info.Id = GetStr(sd, "id");
+						info.Name = GetStr(sd, "name");
+						info.CreatedAt = GetStr(sd, "created_at");
+						info.FileCount = GetInt(sd, "file_count", 0);
+						info.TotalRawBytes = GetLong(sd, "total_raw_bytes", 0);
+						info.TotalCompressedBytes = GetLong(sd, "total_compressed_bytes", 0);
+						list.Add(info);
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return list;
+	}
+
+	public string RestoreSnapshot(string gameDir, string snapshotId)
+	{
+		string json = TakeOwnedStr(core_snapshot_restore(ToUtf8(gameDir), ToUtf8(snapshotId)));
+		if (string.IsNullOrEmpty(json))
+		{
+			throw new Exception("กู้คืน Snapshot ไม่สำเร็จ");
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			throw new Exception("ข้อมูล Snapshot ไม่ถูกต้อง");
+		}
+		if (!GetBool(d, "ok"))
+		{
+			throw new Exception(GetStr(d, "error"));
+		}
+		Dictionary<string, object> r = GetDict(d, "data");
+		if (r == null)
+		{
+			return "กู้คืน Snapshot เรียบร้อยแล้ว";
+		}
+		return "กู้คืน '" + GetStr(r, "name") + "' (" + GetInt(r, "restored_files", 0) + " ไฟล์) สำเร็จ";
+	}
+
+	public void DeleteSnapshot(string gameDir, string snapshotId)
+	{
+		string err = TakeOwnedStr(core_snapshot_delete(ToUtf8(gameDir), ToUtf8(snapshotId)));
+		if (!string.IsNullOrEmpty(err))
+		{
+			throw new Exception(err);
+		}
+	}
+
+	private static Dictionary<string, object> DeserializeDict(string json)
+	{
+		try
+		{
+			JavaScriptSerializer js = new JavaScriptSerializer();
+			js.MaxJsonLength = 16 * 1024 * 1024;
+			return js.Deserialize<Dictionary<string, object>>(json);
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
+	private static Dictionary<string, object> GetDict(Dictionary<string, object> d, string key)
+	{
+		object v;
+		if (d != null && d.TryGetValue(key, out v))
+		{
+			return v as Dictionary<string, object>;
+		}
+		return null;
+	}
+
+	private static List<string> GetStrList(Dictionary<string, object> d, string key)
+	{
+		List<string> list = new List<string>();
+		object v;
+		if (d != null && d.TryGetValue(key, out v))
+		{
+			IList arr = v as IList;
+			if (arr != null)
+			{
+				foreach (object item in arr)
+				{
+					if (item != null)
+					{
+						list.Add(item.ToString());
+					}
+				}
+			}
+		}
+		return list;
+	}
+
+	private static long GetLong(Dictionary<string, object> d, string key, long def)
+	{
+		object v;
+		if (d.TryGetValue(key, out v) && v != null)
+		{
+			try { return Convert.ToInt64(v); } catch { }
+		}
+		return def;
 	}
 
 	private static List<string[]> ParseStringMatrix(string json)

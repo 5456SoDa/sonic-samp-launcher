@@ -1,4 +1,6 @@
+mod backup;
 mod db;
+mod health;
 mod inject;
 mod protocol;
 mod public_list;
@@ -270,6 +272,108 @@ pub extern "C" fn core_db_get_stats(
                 .map(into_cstr)
                 .unwrap_or(null_mut()),
             Err(_) => null_mut(),
+        }
+    })
+}
+
+fn json_ok_or_err<T: serde::Serialize>(res: Result<T, String>) -> *mut c_char {
+    match res {
+        Ok(val) => serde_json::to_string(&serde_json::json!({ "ok": true, "data": val }))
+            .map(into_cstr)
+            .unwrap_or(null_mut()),
+        Err(e) => serde_json::to_string(&serde_json::json!({ "ok": false, "error": e }))
+            .map(into_cstr)
+            .unwrap_or(null_mut()),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn core_health_check(
+    game_dir: *const c_char,
+    skygfx_preset: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return null_mut();
+        };
+        let preset = read_cstr(skygfx_preset).unwrap_or_else(|| "ps2".into());
+        let report = health::check_health(Path::new(&gd), &preset);
+        serde_json::to_string(&report)
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_health_autofix(game_dir: *const c_char) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return into_cstr("{\"ok\":false,\"error\":\"ไม่พบโฟลเดอร์เกม\"}".into());
+        };
+        json_ok_or_err(health::auto_fix_health(Path::new(&gd)))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_snapshot_create(
+    game_dir: *const c_char,
+    name: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return into_cstr("{\"ok\":false,\"error\":\"ไม่พบโฟลเดอร์เกม\"}".into());
+        };
+        let nm = read_cstr(name).unwrap_or_default();
+        json_ok_or_err(backup::create_snapshot(Path::new(&gd), &nm))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_snapshot_list(game_dir: *const c_char) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return into_cstr("[]".into());
+        };
+        match backup::list_snapshots(Path::new(&gd)) {
+            Ok(list) => serde_json::to_string(&list)
+                .map(into_cstr)
+                .unwrap_or(null_mut()),
+            Err(_) => into_cstr("[]".into()),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_snapshot_restore(
+    game_dir: *const c_char,
+    snapshot_id: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let (Some(gd), Some(id)) = (
+            read_cstr(game_dir).filter(|s| !s.is_empty()),
+            read_cstr(snapshot_id).filter(|s| !s.is_empty()),
+        ) else {
+            return into_cstr("{\"ok\":false,\"error\":\"ข้อมูลไม่ครบ\"}".into());
+        };
+        json_ok_or_err(backup::restore_snapshot(Path::new(&gd), &id))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_snapshot_delete(
+    game_dir: *const c_char,
+    snapshot_id: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let (Some(gd), Some(id)) = (
+            read_cstr(game_dir).filter(|s| !s.is_empty()),
+            read_cstr(snapshot_id).filter(|s| !s.is_empty()),
+        ) else {
+            return into_cstr("ข้อมูลไม่ครบ".into());
+        };
+        match backup::delete_snapshot(Path::new(&gd), &id) {
+            Ok(()) => null_mut(),
+            Err(e) => into_cstr(e),
         }
     })
 }

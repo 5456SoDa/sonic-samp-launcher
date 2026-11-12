@@ -22,6 +22,35 @@ internal class ScanPollResult
 	public string Error;
 }
 
+internal class HealthCheckReport
+{
+	public string GtaStatus = "info";
+	public string GtaMsg = "";
+	public string SampStatus = "info";
+	public string SampMsg = "";
+	public string ModsStatus = "info";
+	public string ModsMsg = "";
+	public string EnvStatus = "info";
+	public string EnvMsg = "";
+	public string GfxStatus = "info";
+	public string GfxMsg = "";
+	public List<string> DuplicateAsis = new List<string>();
+	public List<string> ReadonlyFiles = new List<string>();
+	public bool InProgramFiles;
+	public bool MissingDx9;
+	public int FixableCount;
+}
+
+internal class SnapshotInfo
+{
+	public string Id = "";
+	public string Name = "";
+	public string CreatedAt = "";
+	public int FileCount;
+	public long TotalRawBytes;
+	public long TotalCompressedBytes;
+}
+
 internal interface ICore
 {
 	string EngineName { get; }
@@ -57,6 +86,18 @@ internal interface ICore
 	void RecordStat(string ip, string port, string recordedAt, int players);
 
 	List<int> GetStats(string ip, string port, int limit);
+
+	HealthCheckReport CheckHealth(string gameDir, string skyGfxPreset);
+
+	string AutoFixHealth(string gameDir);
+
+	string CreateSnapshot(string gameDir, string name);
+
+	List<SnapshotInfo> ListSnapshots(string gameDir);
+
+	string RestoreSnapshot(string gameDir, string snapshotId);
+
+	void DeleteSnapshot(string gameDir, string snapshotId);
 }
 
 internal static class CoreFactory

@@ -778,4 +778,128 @@ internal class ManagedCore : ICore
 		}
 		return list;
 	}
+
+	public HealthCheckReport CheckHealth(string gameDir, string skyGfxPreset)
+	{
+		HealthCheckReport r = new HealthCheckReport();
+		string gtaExe = Path.Combine(gameDir, "gta_sa.exe");
+		if (!File.Exists(gtaExe))
+		{
+			r.GtaStatus = "bad";
+			r.GtaMsg = "✖ ไม่พบ gta_sa.exe ในโฟลเดอร์เกม";
+		}
+		else
+		{
+			long len = new FileInfo(gtaExe).Length;
+			if (len == 14383616L || len == 14083072L)
+			{
+				r.GtaStatus = "ok";
+				r.GtaMsg = "✓ gta_sa.exe 1.0 US (HOODLUM) สมบูรณ์";
+			}
+			else
+			{
+				r.GtaStatus = "warn";
+				r.GtaMsg = "⚠ gta_sa.exe ขนาด " + len + " bytes — ไม่ใช่ 1.0 US มาตรฐาน SA-MP";
+			}
+		}
+
+		string sampFile = Path.Combine(gameDir, "samp.dll");
+		if (File.Exists(sampFile))
+		{
+			long sLen = new FileInfo(sampFile).Length;
+			string sVer = (sLen == 2199552L) ? "0.3.7 R1" : ((sLen == 2244608L) ? "0.3.7 R2" : "0.3.7");
+			r.SampStatus = "ok";
+			r.SampMsg = "✓ พบ samp.dll (SA-MP " + sVer + " พร้อมใช้งาน)";
+		}
+		else
+		{
+			r.SampStatus = "bad";
+			r.SampMsg = "✖ ไม่พบ samp.dll — ต้องติดตั้ง SA-MP ในโฟลเดอร์เกม";
+		}
+
+		bool hasAsi = File.Exists(Path.Combine(gameDir, "dinput8.dll"));
+		bool hasMl = File.Exists(Path.Combine(gameDir, "modloader.asi"));
+		bool hasCleo = File.Exists(Path.Combine(gameDir, "CLEO.asi"));
+		if (hasAsi && hasMl && hasCleo)
+		{
+			r.ModsStatus = "ok";
+			r.ModsMsg = "✓ ASI Loader + ModLoader (v0.3.10) + CLEO 4.4 พร้อมลงม็อด";
+		}
+		else if (hasAsi && hasMl)
+		{
+			r.ModsStatus = "ok";
+			r.ModsMsg = "✓ ASI Loader + ModLoader ทำงาน";
+		}
+		else if (hasAsi)
+		{
+			r.ModsStatus = "ok";
+			r.ModsMsg = "✓ ASI Loader (dinput8.dll) ทำงาน";
+		}
+		else
+		{
+			r.ModsStatus = "warn";
+			r.ModsMsg = "⚠ ไม่มี ASI Loader (dinput8.dll) — ม็อดจะไม่ทำงาน";
+		}
+
+		if (File.Exists(Path.Combine(gameDir, "scripts", "FramerateVigilante.asi")))
+		{
+			r.EnvStatus = "ok";
+			r.EnvMsg = "✓ FramerateVigilante ทำงาน (ฟิสิกส์ 60-144 FPS ปลอดภัย)";
+		}
+		else
+		{
+			r.EnvStatus = "warn";
+			r.EnvMsg = "⚠ ไม่พบ FramerateVigilante — เล่นเกิน 30 FPS อาจเจอบั๊กฟิสิกส์";
+		}
+
+		if (File.Exists(Path.Combine(gameDir, "skygfx.ini")))
+		{
+			r.GfxStatus = "ok";
+			r.GfxMsg = "✓ SkyGfx ทำงาน (พรีเซ็ต: " + (skyGfxPreset ?? "ps2").ToUpper() + ")";
+		}
+		else
+		{
+			r.GfxStatus = "info";
+			r.GfxMsg = "– SkyGfx ปิดการทำงาน (ใช้กราฟิกต้นฉบับ)";
+		}
+		return r;
+	}
+
+	public string AutoFixHealth(string gameDir)
+	{
+		return "ต้องใช้งาน samp_core.dll (Rust Engine) สำหรับตรวจซ่อม .asi ซ้ำและ Read-Only";
+	}
+
+	public string CreateSnapshot(string gameDir, string name)
+	{
+		string b = Path.Combine(gameDir, "_mod_backup");
+		if (!Directory.Exists(b)) Directory.CreateDirectory(b);
+		string[] targetFiles = new string[] { "stream.ini", "III.VC.SA.LimitAdjuster.ini", "SALodLights.ini", "skygfx1.ini", "skygfx.ini" };
+		int copied = 0;
+		foreach (string tf in targetFiles)
+		{
+			string full = Path.Combine(gameDir, tf);
+			if (File.Exists(full))
+			{
+				File.Copy(full, Path.Combine(b, tf + ".bak"), true);
+				copied++;
+			}
+		}
+		return "สำรองไฟล์คอนฟิกเรียบร้อย (" + copied + " ไฟล์ — C# Fallback)";
+	}
+
+	public List<SnapshotInfo> ListSnapshots(string gameDir)
+	{
+		return new List<SnapshotInfo>();
+	}
+
+	public string RestoreSnapshot(string gameDir, string snapshotId)
+	{
+		throw new Exception("ต้องใช้งาน samp_core.dll สำหรับ Snapshot Restore");
+	}
+
+	public void DeleteSnapshot(string gameDir, string snapshotId)
+	{
+		throw new Exception("ต้องใช้งาน samp_core.dll");
+	}
 }

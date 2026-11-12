@@ -149,6 +149,8 @@ internal partial class LauncherForm : Form
 
 	private Label[] lblHealth;
 	private Label lblEngine;
+	private RoundedBtn btnAutoFix;
+	private HealthCheckReport lastHealthReport;
 	private string bootUrl;
 	private string cfgPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "samp_launcher.cfg");
 	private string dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launcher.db");
