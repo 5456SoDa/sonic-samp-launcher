@@ -927,6 +927,24 @@ internal class ManagedCore : ICore
 	{
 	}
 
+	public bool ApplyDwm(IntPtr hWnd)
+	{
+		return false;
+	}
+
+	public void StartPingSpark(string ip, int port)
+	{
+	}
+
+	public PingSparkReport GetPingSpark(string ip, int port)
+	{
+		return new PingSparkReport();
+	}
+
+	public void StopPingSpark()
+	{
+	}
+
 	public void CloseDb()
 	{
 	}

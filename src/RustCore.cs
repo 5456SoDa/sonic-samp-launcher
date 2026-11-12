@@ -97,6 +97,19 @@ internal class RustCore : ICore
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	private static extern void core_crash_clear(byte[] gameDir);
 
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	[return: MarshalAs(UnmanagedType.U1)]
+	private static extern bool core_ui_apply_dwm(IntPtr hwnd);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_ping_spark_start(byte[] ip, ushort port);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_ping_spark_get(byte[] ip, ushort port);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_ping_spark_stop();
+
 	public string EngineName
 	{
 		get { return engineVersion; }
@@ -816,6 +829,105 @@ internal class RustCore : ICore
 		catch
 		{
 		}
+	}
+
+	public bool ApplyDwm(IntPtr hWnd)
+	{
+		try
+		{
+			return core_ui_apply_dwm(hWnd);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	public void StartPingSpark(string ip, int port)
+	{
+		try
+		{
+			if (string.IsNullOrEmpty(ip) || port <= 0 || port > 65535)
+			{
+				core_ping_spark_stop();
+				return;
+			}
+			core_ping_spark_start(ToUtf8(ip), (ushort)port);
+		}
+		catch
+		{
+		}
+	}
+
+	public PingSparkReport GetPingSpark(string ip, int port)
+	{
+		PingSparkReport rep = new PingSparkReport();
+		rep.Host = ip ?? "";
+		rep.Port = port;
+		if (string.IsNullOrEmpty(ip) || port <= 0 || port > 65535)
+		{
+			return rep;
+		}
+		try
+		{
+			IntPtr ptr = core_ping_spark_get(ToUtf8(ip), (ushort)port);
+			string json = TakeOwnedStr(ptr);
+			if (string.IsNullOrEmpty(json))
+			{
+				return rep;
+			}
+			Dictionary<string, object> d = DeserializeDict(json);
+			if (d == null)
+			{
+				return rep;
+			}
+			rep.Latest = GetInt(d, "latest", -1);
+			rep.Min = GetInt(d, "min", 0);
+			rep.Max = GetInt(d, "max", 0);
+			rep.Avg = GetInt(d, "avg", 0);
+			rep.Jitter = GetDouble(d, "jitter", 0.0);
+			rep.Loss = GetDouble(d, "loss", 0.0);
+			object rawHist;
+			if (d.TryGetValue("history", out rawHist))
+			{
+				IList list = rawHist as IList;
+				if (list != null)
+				{
+					foreach (object item in list)
+					{
+						if (item != null)
+						{
+							try { rep.History.Add(Convert.ToInt32(item)); } catch { }
+						}
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return rep;
+	}
+
+	public void StopPingSpark()
+	{
+		try
+		{
+			core_ping_spark_stop();
+		}
+		catch
+		{
+		}
+	}
+
+	private static double GetDouble(Dictionary<string, object> d, string key, double def)
+	{
+		object v;
+		if (d.TryGetValue(key, out v) && v != null)
+		{
+			try { return Convert.ToDouble(v); } catch { }
+		}
+		return def;
 	}
 
 	public void CloseDb()

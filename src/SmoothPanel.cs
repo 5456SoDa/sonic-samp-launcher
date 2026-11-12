@@ -1,3 +1,4 @@
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -54,7 +55,12 @@ internal class SmoothPanel : Panel
 	private static GraphicsPath RoundPath(Rectangle r, int rad)
 	{
 		GraphicsPath graphicsPath = new GraphicsPath();
-		int num = rad * 2;
+		int num = Math.Min(rad * 2, Math.Min(Math.Max(2, r.Width), Math.Max(2, r.Height)));
+		if (num < 2)
+		{
+			graphicsPath.AddRectangle(r);
+			return graphicsPath;
+		}
 		graphicsPath.AddArc(r.X, r.Y, num, num, 180f, 90f);
 		graphicsPath.AddArc(r.Right - num, r.Y, num, num, 270f, 90f);
 		graphicsPath.AddArc(r.Right - num, r.Bottom - num, num, num, 0f, 90f);

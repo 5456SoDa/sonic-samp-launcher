@@ -60,7 +60,7 @@ if not exist "%CSC%" (
     exit /b 1
 )
 
-"%CSC%" /nologo /target:winexe /platform:x86 /unsafe /optimize+ /r:System.dll,System.Core.dll,System.Windows.Forms.dll,System.Drawing.dll,System.Web.Extensions.dll /win32icon:src\app.ico /out:..\SampLauncher.exe src\*.cs src\Properties\*.cs
+"%CSC%" /nologo /target:winexe /platform:x86 /unsafe /optimize+ /r:System.dll,System.Core.dll,System.Windows.Forms.dll,System.Drawing.dll,System.Web.Extensions.dll /win32icon:src\app.ico /win32manifest:src\app.manifest /out:..\SampLauncher.exe src\*.cs src\Properties\*.cs
 
 if %ERRORLEVEL% equ 0 (
     echo [SUCCESS] SampLauncher.exe compiled successfully!

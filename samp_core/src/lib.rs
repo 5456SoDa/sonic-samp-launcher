@@ -2,9 +2,11 @@ mod assets;
 mod backup;
 mod crash;
 mod db;
+mod dwm;
 mod health;
 mod inject;
 mod modloader_cfg;
+mod ping_spark;
 mod protocol;
 mod public_list;
 mod query;
@@ -383,7 +385,10 @@ pub extern "C" fn core_snapshot_delete(
 
 #[no_mangle]
 pub extern "C" fn core_db_close() {
-    let _ = std::panic::catch_unwind(db::close_db);
+    let _ = std::panic::catch_unwind(|| {
+        ping_spark::stop_ping();
+        db::close_db();
+    });
 }
 
 #[no_mangle]
@@ -457,4 +462,39 @@ pub extern "C" fn core_crash_clear(game_dir: *const c_char) {
             crash::clear_latest_crash(Path::new(&gd));
         }
     }));
+}
+
+#[no_mangle]
+pub extern "C" fn core_ui_apply_dwm(hwnd: usize) -> bool {
+    catch_unwind(AssertUnwindSafe(|| dwm::apply_dwm(hwnd))).unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn core_ping_spark_start(ip: *const c_char, port: u16) {
+    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+        if let Some(host) = read_cstr(ip).filter(|s| !s.is_empty()) {
+            ping_spark::start_ping(&host, port);
+        } else {
+            ping_spark::stop_ping();
+        }
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn core_ping_spark_get(ip: *const c_char, port: u16) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(host) = read_cstr(ip).filter(|s| !s.is_empty()) else {
+            return null_mut();
+        };
+        let rep = ping_spark::get_spark_report(&host, port);
+        serde_json::to_string(&rep)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_ping_spark_stop() {
+    let _ = catch_unwind(AssertUnwindSafe(ping_spark::stop_ping));
 }

@@ -104,10 +104,13 @@ internal class ToggleSwitch : Control
 				}
 			}
 		}
-		int num3 = 3 + (int)((float)(base.Width - 19) * num);
+		int pad = Math.Max(2, base.Height / 7);
+		int knob = Math.Max(6, base.Height - pad * 2);
+		int travel = Math.Max(0, base.Width - knob - pad * 2);
+		int kx = pad + (int)(travel * num);
 		using (SolidBrush brush2 = new SolidBrush(Color.White))
 		{
-			graphics.FillEllipse(brush2, num3, 3, 16, 16);
+			graphics.FillEllipse(brush2, kx, pad, knob, knob);
 		}
 	}
 

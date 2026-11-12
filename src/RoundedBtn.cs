@@ -36,6 +36,43 @@ internal class RoundedBtn : Control, IButtonControl
 
 	public Color BorderColor { get; set; }
 
+	private bool pulseGlow;
+	private Timer pulseTmr;
+	private float pulsePhase;
+
+	public bool PulseGlow
+	{
+		get { return pulseGlow; }
+		set
+		{
+			if (pulseGlow == value) return;
+			pulseGlow = value;
+			if (pulseGlow)
+			{
+				if (pulseTmr == null)
+				{
+					pulseTmr = new Timer();
+					pulseTmr.Interval = 45;
+					pulseTmr.Tick += delegate
+					{
+						if (!IsDisposed && Visible && pulseGlow)
+						{
+							pulsePhase += 0.14f;
+							if (pulsePhase > 6.28318f) pulsePhase -= 6.28318f;
+							Invalidate();
+						}
+					};
+				}
+				pulseTmr.Start();
+			}
+			else if (pulseTmr != null)
+			{
+				pulseTmr.Stop();
+			}
+			Invalidate();
+		}
+	}
+
 	public Color TextColor
 	{
 		get
@@ -197,9 +234,21 @@ internal class RoundedBtn : Control, IButtonControl
 			using (GraphicsPath path = Rp(r))
 			{
 				graphics.FillPath(brush, path);
-				if (BorderColor != Color.Empty && BorderColor != Color.Transparent)
+				if (pulseGlow && base.Enabled)
 				{
-					using (Pen p = new Pen(BorderColor, 1.2f))
+					int alpha = 75 + (int)(Math.Sin(pulsePhase) * 55.0 + 55.0);
+					Color glowCol = Color.FromArgb(Math.Max(20, Math.Min(220, alpha)),
+						BorderColor != Color.Empty ? BorderColor : Color.FromArgb(255, 235, 0));
+					using (Pen gp = new Pen(glowCol, 2.2f))
+					{
+						graphics.DrawPath(gp, path);
+					}
+				}
+				else if (BorderColor != Color.Empty && BorderColor != Color.Transparent)
+				{
+					int alpha = hovered ? 255 : 190;
+					Color bc = Color.FromArgb(alpha, BorderColor);
+					using (Pen p = new Pen(bc, hovered ? 1.5f : 1.15f))
 					{
 						graphics.DrawPath(p, path);
 					}
@@ -215,14 +264,15 @@ internal class RoundedBtn : Control, IButtonControl
 		TextFormatFlags flags = (TextFormatFlags)(((!alignLeft) ? 1u : 0u) | 4u | 0x20);
 		if (alignLeft)
 		{
-			bounds = new Rectangle(14, 0, base.Width - 18, base.Height);
+			int leftPad = DpiHelper.S(14);
+			bounds = new Rectangle(leftPad, 0, Math.Max(10, base.Width - leftPad - DpiHelper.S(4)), base.Height);
 		}
 		TextRenderer.DrawText(graphics, Text, Font, bounds, foreColor, flags);
 	}
 
 	private GraphicsPath Rp(Rectangle r)
 	{
-		int num = Radius * 2;
+		int num = Math.Min(Radius * 2, Math.Min(Math.Max(2, r.Width), Math.Max(2, r.Height)));
 		GraphicsPath graphicsPath = new GraphicsPath();
 		if (num < 2)
 		{
@@ -239,9 +289,10 @@ internal class RoundedBtn : Control, IButtonControl
 
 	protected override void Dispose(bool disposing)
 	{
-		if (disposing && tmr != null)
+		if (disposing)
 		{
-			tmr.Dispose();
+			if (tmr != null) tmr.Dispose();
+			if (pulseTmr != null) pulseTmr.Dispose();
 		}
 		base.Dispose(disposing);
 	}

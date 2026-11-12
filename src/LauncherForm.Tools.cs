@@ -84,17 +84,36 @@ internal static class ChatLogReader
 internal partial class LauncherForm
 {
 	private int chatLoadGen;
+	private RoundedBtn btnGalRefresh;
+	private RoundedBtn btnGalFolder;
+	private RoundedBtn btnChatReload;
+	private RoundedBtn btnChatCopy;
+	private RoundedBtn btnChatOpen;
+	private SmoothPanel pnlChatBox;
+	private Label lblRconPort;
+	private Label lblRconPass;
+	private Label lblRconRes;
+	private RoundedBtn btnRconTest;
+	private RoundedBtn btnRconVars;
+	private RoundedBtn btnRconGmx;
+	private RoundedBtn btnRconSend;
+	private Dictionary<Control, Rectangle> modsBaseBounds;
+	private int modsCard0BaseW;
+	private int modsCard0BaseH;
+	private int modsCard1BaseW;
+	private int modsCard1BaseH;
+
 	private void BuildGalPage()
 	{
 		AddLbl(pnlGal, "แกลเลอรีสกรีนช็อต (F8 ในเกม)", fTitle, 0, 0, colText);
 		galCount = AddLbl(pnlGal, "", fSub, 0, 32, colSub);
-		RoundedBtn roundedBtn = MakeMiniBtn("↻  รีเฟรช", 446, 22, 106, 34);
-		roundedBtn.Click += delegate
+		btnGalRefresh = MakeMiniBtn("↻  รีเฟรช", 446, 22, 106, 34);
+		btnGalRefresh.Click += delegate
 		{
 			LoadGallery();
 		};
-		RoundedBtn roundedBtn2 = MakeMiniBtn("📂  เปิดโฟลเดอร์", 558, 22, 110, 34);
-		roundedBtn2.Click += delegate
+		btnGalFolder = MakeMiniBtn("📂  เปิดโฟลเดอร์", 558, 22, 110, 34);
+		btnGalFolder.Click += delegate
 		{
 			string text = ShotDir();
 			if (!Directory.Exists(text))
@@ -114,8 +133,8 @@ internal partial class LauncherForm
 				ShowErr("ไม่สามารถเปิดโฟลเดอร์สกรีนช็อตได้");
 			}
 		};
-		pnlGal.Controls.Add(roundedBtn);
-		pnlGal.Controls.Add(roundedBtn2);
+		pnlGal.Controls.Add(btnGalRefresh);
+		pnlGal.Controls.Add(btnGalFolder);
 		galFlow = new FlowLayoutPanel();
 		galFlow.Location = new Point(0, 64);
 		galFlow.Size = new Size(668, 364);
@@ -134,17 +153,17 @@ internal partial class LauncherForm
 			FilterChatLines();
 		};
 
-		RoundedBtn btnReload = MakeMiniBtn("↻  รีเฟรช", 380, 0, 90, 42);
-		btnReload.BorderColor = colAccent;
-		btnReload.Click += delegate
+		btnChatReload = MakeMiniBtn("↻  รีเฟรช", 380, 0, 90, 42);
+		btnChatReload.BorderColor = colAccent;
+		btnChatReload.Click += delegate
 		{
 			LoadChatLines();
 		};
-		pnlChat.Controls.Add(btnReload);
+		pnlChat.Controls.Add(btnChatReload);
 
-		RoundedBtn btnCopy = MakeMiniBtn("📋  คัดลอก", 478, 0, 96, 42);
-		btnCopy.BorderColor = colYellow;
-		btnCopy.Click += delegate
+		btnChatCopy = MakeMiniBtn("📋  คัดลอก", 478, 0, 96, 42);
+		btnChatCopy.BorderColor = colYellow;
+		btnChatCopy.Click += delegate
 		{
 			if (txtChatLog != null && !string.IsNullOrEmpty(txtChatLog.Text))
 			{
@@ -156,11 +175,11 @@ internal partial class LauncherForm
 				catch { }
 			}
 		};
-		pnlChat.Controls.Add(btnCopy);
+		pnlChat.Controls.Add(btnChatCopy);
 
-		RoundedBtn btnOpen = MakeMiniBtn("📂  โฟลเดอร์", 582, 0, 86, 42);
-		btnOpen.BorderColor = colAccent;
-		btnOpen.Click += delegate
+		btnChatOpen = MakeMiniBtn("📂  โฟลเดอร์", 582, 0, 86, 42);
+		btnChatOpen.BorderColor = colAccent;
+		btnChatOpen.Click += delegate
 		{
 			try
 			{
@@ -176,15 +195,15 @@ internal partial class LauncherForm
 			}
 			catch { }
 		};
-		pnlChat.Controls.Add(btnOpen);
+		pnlChat.Controls.Add(btnChatOpen);
 
 		lblChatInfo = AddLbl(pnlChat, "กำลังโหลดบันทึกแชท...", fSmall, 2, 46, colSub);
 
-		SmoothPanel logBox = new SmoothPanel(colField, 10);
-		logBox.Location = new Point(0, 68);
-		logBox.Size = new Size(668, 360);
-		logBox.Padding = new Padding(10);
-		logBox.BorderColor = Color.FromArgb(40, 60, 95);
+		pnlChatBox = new SmoothPanel(colField, 10);
+		pnlChatBox.Location = new Point(0, 68);
+		pnlChatBox.Size = new Size(668, 360);
+		pnlChatBox.Padding = new Padding(10);
+		pnlChatBox.BorderColor = Color.FromArgb(40, 60, 95);
 
 		txtChatLog = new RichTextBox();
 		txtChatLog.Dock = DockStyle.Fill;
@@ -196,8 +215,8 @@ internal partial class LauncherForm
 		txtChatLog.WordWrap = false;
 		txtChatLog.ScrollBars = RichTextBoxScrollBars.Both;
 
-		logBox.Controls.Add(txtChatLog);
-		pnlChat.Controls.Add(logBox);
+		pnlChatBox.Controls.Add(txtChatLog);
+		pnlChat.Controls.Add(pnlChatBox);
 	}
 
 	private void LoadChatLines()
@@ -467,8 +486,8 @@ internal partial class LauncherForm
 		{
 			using (Image image = Image.FromFile(path))
 			{
-				int num = 200;
-				int num2 = 112;
+				int num = DpiHelper.S(200);
+				int num2 = DpiHelper.S(112);
 				double num3 = Math.Max((double)num / (double)image.Width, (double)num2 / (double)image.Height);
 				int num4 = Math.Max(1, (int)((double)num / num3));
 				int num5 = Math.Max(1, (int)((double)num2 / num3));
@@ -506,30 +525,30 @@ internal partial class LauncherForm
 		AddLbl(pnlRcon, "RCON Panel — คุมเซิร์ฟเวอร์ของคุณ", fTitle, 0, 0, colText);
 		AddLbl(pnlRcon, "IP", fSub, 0, 36, colSub);
 		txtRconIp = AddField(pnlRcon, "127.0.0.1", 0, 56, 300);
-		AddLbl(pnlRcon, "PORT", fSub, 312, 36, colSub);
+		lblRconPort = AddLbl(pnlRcon, "PORT", fSub, 312, 36, colSub);
 		txtRconPort = AddField(pnlRcon, "7777", 312, 56, 140);
-		AddLbl(pnlRcon, "รหัส RCON", fSub, 464, 36, colSub);
+		lblRconPass = AddLbl(pnlRcon, "รหัส RCON", fSub, 464, 36, colSub);
 		txtRconPass = AddField(pnlRcon, "", 464, 56, 204);
 		txtRconPass.UseSystemPasswordChar = true;
-		RoundedBtn roundedBtn = MakeMiniBtn("↻  ทดสอบเชื่อมต่อ", 0, 112, 214, 40);
-		roundedBtn.Click += delegate
+		btnRconTest = MakeMiniBtn("↻  ทดสอบเชื่อมต่อ", 0, 112, 214, 40);
+		btnRconTest.Click += delegate
 		{
 			RconRun("echo rcon_ok", true);
 		};
-		RoundedBtn roundedBtn2 = MakeMiniBtn("varlist", 226, 112, 214, 40);
-		roundedBtn2.Click += delegate
+		btnRconVars = MakeMiniBtn("varlist", 226, 112, 214, 40);
+		btnRconVars.Click += delegate
 		{
 			RconRun("varlist", false);
 		};
-		RoundedBtn roundedBtn3 = MakeMiniBtn("⚠  gmx (รีสตาร์ทโหมด)", 452, 112, 216, 40);
-		roundedBtn3.Click += delegate
+		btnRconGmx = MakeMiniBtn("⚠  gmx (รีสตาร์ทโหมด)", 452, 112, 216, 40);
+		btnRconGmx.Click += delegate
 		{
 			RconRun("gmx", false);
 		};
-		pnlRcon.Controls.Add(roundedBtn);
-		pnlRcon.Controls.Add(roundedBtn2);
-		pnlRcon.Controls.Add(roundedBtn3);
-		AddLbl(pnlRcon, "ผลลัพธ์", fSub, 0, 162, colSub);
+		pnlRcon.Controls.Add(btnRconTest);
+		pnlRcon.Controls.Add(btnRconVars);
+		pnlRcon.Controls.Add(btnRconGmx);
+		lblRconRes = AddLbl(pnlRcon, "ผลลัพธ์", fSub, 0, 162, colSub);
 		txtRconOut = new TextBox();
 		txtRconOut.Multiline = true;
 		txtRconOut.ReadOnly = true;
@@ -555,8 +574,9 @@ internal partial class LauncherForm
 				}
 			}
 		};
-		RoundedBtn roundedBtn4 = MakeMiniBtn("ส่งคำสั่ง", 560, 374, 108, 42);
-		roundedBtn4.Click += delegate
+		btnRconSend = MakeMiniBtn("ส่งคำสั่ง", 560, 374, 108, 42);
+		btnRconSend.BorderColor = colAccent;
+		btnRconSend.Click += delegate
 		{
 			string text2 = FieldVal(txtRconCmd);
 			if (text2.Length > 0)
@@ -565,7 +585,215 @@ internal partial class LauncherForm
 				ForceText(txtRconCmd, "");
 			}
 		};
-		pnlRcon.Controls.Add(roundedBtn4);
+		pnlRcon.Controls.Add(btnRconSend);
+	}
+
+	private void LayoutToolsPages(int pageW, int pageH)
+	{
+		// Gallery Page
+		if (galFlow != null && btnGalRefresh != null && btnGalFolder != null)
+		{
+			int wFolder = DpiHelper.S(116);
+			int wRefresh = DpiHelper.S(106);
+			int gGap = DpiHelper.S(8);
+			btnGalFolder.Size = new Size(wFolder, DpiHelper.S(34));
+			btnGalFolder.Location = new Point(pageW - wFolder, DpiHelper.S(20));
+			btnGalRefresh.Size = new Size(wRefresh, DpiHelper.S(34));
+			btnGalRefresh.Location = new Point(btnGalFolder.Left - gGap - wRefresh, DpiHelper.S(20));
+			galFlow.Location = new Point(0, DpiHelper.S(64));
+			galFlow.Size = new Size(pageW, Math.Max(DpiHelper.S(160), pageH - DpiHelper.S(64)));
+		}
+
+		// Chat Page
+		if (pnlChatBox != null && btnChatReload != null && btnChatCopy != null && btnChatOpen != null)
+		{
+			int topH = DpiHelper.S(42);
+			int cGap = DpiHelper.S(8);
+			int wOpen = DpiHelper.S(92);
+			int wCopy = DpiHelper.S(96);
+			int wReload = DpiHelper.S(94);
+			btnChatOpen.Size = new Size(wOpen, topH);
+			btnChatOpen.Location = new Point(pageW - wOpen, 0);
+			btnChatCopy.Size = new Size(wCopy, topH);
+			btnChatCopy.Location = new Point(btnChatOpen.Left - cGap - wCopy, 0);
+			btnChatReload.Size = new Size(wReload, topH);
+			btnChatReload.Location = new Point(btnChatCopy.Left - cGap - wReload, 0);
+			if (txtChatSearch != null && txtChatSearch.Parent != null)
+			{
+				txtChatSearch.Parent.Location = new Point(0, 0);
+				txtChatSearch.Parent.Size = new Size(Math.Max(DpiHelper.S(180), btnChatReload.Left - DpiHelper.S(10)), topH);
+			}
+			if (lblChatInfo != null)
+			{
+				lblChatInfo.Location = new Point(DpiHelper.S(2), DpiHelper.S(46));
+			}
+			pnlChatBox.Location = new Point(0, DpiHelper.S(68));
+			pnlChatBox.Size = new Size(pageW, Math.Max(DpiHelper.S(160), pageH - DpiHelper.S(68)));
+		}
+
+		// RCON Page
+		if (txtRconOut != null && txtRconIp != null && txtRconPort != null && txtRconPass != null)
+		{
+			int rGap = DpiHelper.S(10);
+			int ipW = Math.Max(DpiHelper.S(180), (int)((pageW - rGap * 2) * 0.44));
+			int portW = Math.Max(DpiHelper.S(100), (int)((pageW - rGap * 2) * 0.21));
+			int passW = Math.Max(DpiHelper.S(140), pageW - ipW - portW - rGap * 2);
+			int lblY = DpiHelper.S(36);
+			int fieldY = DpiHelper.S(56);
+			int fieldH = DpiHelper.S(42);
+
+			if (txtRconIp.Parent != null)
+			{
+				txtRconIp.Parent.Location = new Point(0, fieldY);
+				txtRconIp.Parent.Size = new Size(ipW, fieldH);
+			}
+			int portX = ipW + rGap;
+			if (lblRconPort != null) lblRconPort.Location = new Point(portX, lblY);
+			if (txtRconPort.Parent != null)
+			{
+				txtRconPort.Parent.Location = new Point(portX, fieldY);
+				txtRconPort.Parent.Size = new Size(portW, fieldH);
+			}
+			int passX = portX + portW + rGap;
+			if (lblRconPass != null) lblRconPass.Location = new Point(passX, lblY);
+			if (txtRconPass.Parent != null)
+			{
+				txtRconPass.Parent.Location = new Point(passX, fieldY);
+				txtRconPass.Parent.Size = new Size(passW, fieldH);
+			}
+
+			int btnY = DpiHelper.S(112);
+			int btnH = DpiHelper.S(40);
+			int btnW = (pageW - rGap * 2) / 3;
+			if (btnRconTest != null) { btnRconTest.Location = new Point(0, btnY); btnRconTest.Size = new Size(btnW, btnH); }
+			if (btnRconVars != null) { btnRconVars.Location = new Point(btnW + rGap, btnY); btnRconVars.Size = new Size(btnW, btnH); }
+			if (btnRconGmx != null) { btnRconGmx.Location = new Point((btnW + rGap) * 2, btnY); btnRconGmx.Size = new Size(pageW - (btnW + rGap) * 2, btnH); }
+
+			if (lblRconRes != null) lblRconRes.Location = new Point(0, DpiHelper.S(162));
+			int cmdH = DpiHelper.S(42);
+			int cmdY = pageH - cmdH;
+			int outY = DpiHelper.S(182);
+			txtRconOut.Location = new Point(0, outY);
+			txtRconOut.Size = new Size(pageW, Math.Max(DpiHelper.S(120), cmdY - outY - DpiHelper.S(10)));
+
+			int sendW = DpiHelper.S(112);
+			if (txtRconCmd != null && txtRconCmd.Parent != null)
+			{
+				txtRconCmd.Parent.Location = new Point(0, cmdY);
+				txtRconCmd.Parent.Size = new Size(Math.Max(DpiHelper.S(160), pageW - sendW - DpiHelper.S(8)), cmdH);
+			}
+			if (btnRconSend != null)
+			{
+				btnRconSend.Location = new Point(pageW - sendW, cmdY);
+				btnRconSend.Size = new Size(sendW, cmdH);
+			}
+		}
+
+		// Settings Page
+		LayoutSettingsPage(pageW, pageH);
+	}
+
+	private void LayoutModsPage(int pageW, int pageH)
+	{
+		if (pnlMods == null || pnlMods.Controls.Count < 2) return;
+		Control card0 = pnlMods.Controls[0];
+		Control card1 = pnlMods.Controls[1];
+
+		if (modsBaseBounds == null)
+		{
+			modsBaseBounds = new Dictionary<Control, Rectangle>();
+			modsCard0BaseW = Math.Max(1, card0.Width);
+			modsCard0BaseH = Math.Max(1, card0.Height);
+			modsCard1BaseW = Math.Max(1, card1.Width);
+			modsCard1BaseH = Math.Max(1, card1.Height);
+			SnapshotBoundsTree(card0);
+			SnapshotBoundsTree(card1);
+		}
+
+		int gap = DpiHelper.S(14);
+		int leftW = (pageW - gap) / 2;
+		int rightW = pageW - leftW - gap;
+
+		card0.Location = new Point(0, 0);
+		card0.Size = new Size(leftW, pageH);
+		LayoutModsCard(card0, modsCard0BaseW, modsCard0BaseH, leftW, pageH);
+
+		card1.Location = new Point(leftW + gap, 0);
+		card1.Size = new Size(rightW, pageH);
+		LayoutModsCard(card1, modsCard1BaseW, modsCard1BaseH, rightW, pageH);
+	}
+
+	private void SnapshotBoundsTree(Control parent)
+	{
+		foreach (Control c in parent.Controls)
+		{
+			modsBaseBounds[c] = c.Bounds;
+			if (c is SmoothPanel)
+			{
+				SnapshotBoundsTree(c);
+			}
+		}
+	}
+
+	private void LayoutModsCard(Control card, int baseW, int baseH, int newW, int newH)
+	{
+		int dh = newH - baseH;
+		int origClbBottom = -1;
+		Rectangle clbOrig;
+		if (clbModFolders != null && clbModFolders.Parent == card && modsBaseBounds.TryGetValue(clbModFolders, out clbOrig))
+		{
+			origClbBottom = clbOrig.Bottom;
+		}
+		int midX = newW / 2;
+		int halfGap = DpiHelper.S(4);
+
+		foreach (Control c in card.Controls)
+		{
+			Rectangle r;
+			if (!modsBaseBounds.TryGetValue(c, out r)) continue;
+			int top = r.Top;
+			if (origClbBottom > 0 && r.Top >= origClbBottom - DpiHelper.S(2))
+			{
+				top = r.Top + dh;
+			}
+			if (c == clbModFolders)
+			{
+				int rightMargin = baseW - r.Right;
+				c.Location = new Point(r.Left, top);
+				c.Size = new Size(Math.Max(DpiHelper.S(120), newW - r.Left - rightMargin), Math.Max(DpiHelper.S(80), r.Height + dh));
+			}
+			else if (r.Width >= (int)(baseW * 0.65f) && !(c is Label && c.AutoSize))
+			{
+				int rightMargin = baseW - r.Right;
+				c.Location = new Point(r.Left, top);
+				c.Size = new Size(Math.Max(DpiHelper.S(100), newW - r.Left - rightMargin), r.Height);
+				if (c is SmoothPanel)
+				{
+					LayoutModsCard(c, r.Width, r.Height, c.Width, c.Height);
+				}
+			}
+			else if (r.Left >= (int)(baseW * 0.68f) && r.Width < (int)(baseW * 0.34f))
+			{
+				int rightOffset = baseW - r.Left;
+				c.Location = new Point(Math.Max(DpiHelper.S(12), newW - rightOffset), top);
+			}
+			else if (r.Left <= (int)(baseW * 0.15f) && r.Width >= (int)(baseW * 0.35f) && r.Width < (int)(baseW * 0.60f))
+			{
+				c.Location = new Point(r.Left, top);
+				c.Size = new Size(Math.Max(DpiHelper.S(80), midX - halfGap - r.Left), r.Height);
+			}
+			else if (r.Left >= (int)(baseW * 0.45f) && r.Left < (int)(baseW * 0.65f) && r.Width >= (int)(baseW * 0.35f) && r.Width < (int)(baseW * 0.60f))
+			{
+				int rightMargin = Math.Max(DpiHelper.S(12), baseW - r.Right);
+				int nx = midX + halfGap;
+				c.Location = new Point(nx, top);
+				c.Size = new Size(Math.Max(DpiHelper.S(80), newW - rightMargin - nx), r.Height);
+			}
+			else
+			{
+				c.Location = new Point(r.Left, top);
+			}
+		}
 	}
 
 	private void RconRun(string cmd, bool isTest)

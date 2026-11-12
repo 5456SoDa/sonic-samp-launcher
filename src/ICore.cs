@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 internal class ScanUpdateItem
@@ -122,6 +123,19 @@ internal class GuardRuntimeStatus
 	public TelemetryData Telemetry;
 }
 
+internal class PingSparkReport
+{
+	public string Host = "";
+	public int Port;
+	public List<int> History = new List<int>();
+	public int Latest = -1;
+	public int Min;
+	public int Max;
+	public int Avg;
+	public double Jitter;
+	public double Loss;
+}
+
 internal interface ICore
 {
 	string EngineName { get; }
@@ -179,6 +193,14 @@ internal interface ICore
 	GuardRuntimeStatus GetGuardStatus(string gameDir);
 
 	void ClearLatestCrash(string gameDir);
+
+	bool ApplyDwm(IntPtr hWnd);
+
+	void StartPingSpark(string ip, int port);
+
+	PingSparkReport GetPingSpark(string ip, int port);
+
+	void StopPingSpark();
 
 	void CloseDb();
 }

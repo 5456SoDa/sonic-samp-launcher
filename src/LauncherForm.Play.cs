@@ -8,14 +8,24 @@ using System.Windows.Forms;
 
 internal partial class LauncherForm
 {
+	private SmoothPanel pnlHeroCard;
+	private Label lblHeroTip;
+	private RoundedBtn btnHeroRefresh;
+	private SmoothPanel pnlNickBox;
+	private SmoothPanel pnlSrvBox;
+	private RoundedBtn btnNickProfiles;
+	private RoundedBtn btnNickRand;
+	private Label lblAutoConnect;
+	private Label lblQuickTitle;
+
 	private void BuildPlayPage()
 	{
-		// 1. Hero Server Card (Y=0, H=140, W=668)
-		SmoothPanel smoothPanel = new SmoothPanel(colCard, 12);
-		smoothPanel.BorderColor = Color.FromArgb(45, 68, 105);
-		smoothPanel.Location = new Point(0, 0);
-		smoothPanel.Size = new Size(668, 140);
-		pnlPlay.Controls.Add(smoothPanel);
+		// 1. Hero Server Card (Y=0, H=148, W=756 base)
+		pnlHeroCard = new SmoothPanel(colCard, 12);
+		pnlHeroCard.BorderColor = Color.FromArgb(45, 68, 105);
+		pnlHeroCard.Location = new Point(0, 0);
+		pnlHeroCard.Size = new Size(756, 148);
+		pnlPlay.Controls.Add(pnlHeroCard);
 
 		lblHeroName = new Label();
 		lblHeroName.Text = "กรอก IP เพื่อตรวจสถานะเซิร์ฟเวอร์";
@@ -23,8 +33,9 @@ internal partial class LauncherForm
 		lblHeroName.ForeColor = Color.White;
 		lblHeroName.BackColor = Color.Transparent;
 		lblHeroName.Location = new Point(20, 14);
-		lblHeroName.AutoSize = true;
-		smoothPanel.Controls.Add(lblHeroName);
+		lblHeroName.Size = new Size(375, 28);
+		lblHeroName.AutoEllipsis = true;
+		pnlHeroCard.Controls.Add(lblHeroName);
 
 		lblHeroIp = new Label();
 		lblHeroIp.Text = "—";
@@ -33,7 +44,7 @@ internal partial class LauncherForm
 		lblHeroIp.BackColor = Color.Transparent;
 		lblHeroIp.Location = new Point(20, 44);
 		lblHeroIp.AutoSize = true;
-		smoothPanel.Controls.Add(lblHeroIp);
+		pnlHeroCard.Controls.Add(lblHeroIp);
 
 		lblHeroMode = new Label();
 		lblHeroMode.Text = "";
@@ -41,8 +52,9 @@ internal partial class LauncherForm
 		lblHeroMode.ForeColor = colSub;
 		lblHeroMode.BackColor = Color.Transparent;
 		lblHeroMode.Location = new Point(20, 68);
-		lblHeroMode.AutoSize = true;
-		smoothPanel.Controls.Add(lblHeroMode);
+		lblHeroMode.Size = new Size(375, 20);
+		lblHeroMode.AutoEllipsis = true;
+		pnlHeroCard.Controls.Add(lblHeroMode);
 
 		lblHeroPing = new Label();
 		lblHeroPing.Text = "";
@@ -51,70 +63,77 @@ internal partial class LauncherForm
 		lblHeroPing.BackColor = Color.Transparent;
 		lblHeroPing.Location = new Point(20, 92);
 		lblHeroPing.AutoSize = true;
-		smoothPanel.Controls.Add(lblHeroPing);
+		pnlHeroCard.Controls.Add(lblHeroPing);
 
-		Label label = new Label();
-		label.Text = "* ปิด Frame Limiter ในเกม เพื่อเล่นได้ 144 FPS อย่างลื่นไหล";
-		label.Font = fSmall;
-		label.ForeColor = colSub;
-		label.BackColor = Color.Transparent;
-		label.Location = new Point(20, 114);
-		label.AutoSize = true;
-		smoothPanel.Controls.Add(label);
+		lblHeroTip = new Label();
+		lblHeroTip.Text = "* ปิด Frame Limiter ในเกม เพื่อเล่นได้ 144 FPS อย่างลื่นไหล";
+		lblHeroTip.Font = fSmall;
+		lblHeroTip.ForeColor = colSub;
+		lblHeroTip.BackColor = Color.Transparent;
+		lblHeroTip.Location = new Point(20, 118);
+		lblHeroTip.Size = new Size(375, 18);
+		lblHeroTip.AutoEllipsis = true;
+		pnlHeroCard.Controls.Add(lblHeroTip);
 
-		ring = new RingGauge();
-		ring.Location = new Point(552, 20);
-		ring.Size = new Size(100, 100);
-		ring.RingColor = colAccent;
-		smoothPanel.Controls.Add(ring);
+		heroSpark = new SparklineGraph();
+		heroSpark.CompactMode = true;
+		heroSpark.AccentColor = colAccent;
+		heroSpark.Location = new Point(406, 24);
+		heroSpark.Size = new Size(188, 100);
+		pnlHeroCard.Controls.Add(heroSpark);
 
-		RoundedBtn roundedBtn = MakeMiniBtn("↻", 508, 48, 36, 36);
-		roundedBtn.Font = new Font("Segoe UI", 13f, FontStyle.Bold);
-		roundedBtn.BorderColor = colAccent;
-		roundedBtn.Click += delegate
+		btnHeroRefresh = MakeMiniBtn("↻", 602, 56, 36, 36);
+		btnHeroRefresh.Font = new Font("Segoe UI", 13f, FontStyle.Bold);
+		btnHeroRefresh.BorderColor = colAccent;
+		btnHeroRefresh.Click += delegate
 		{
 			QueryPlayServer();
 		};
-		smoothPanel.Controls.Add(roundedBtn);
+		pnlHeroCard.Controls.Add(btnHeroRefresh);
 
-		// 2. Middle: Symmetrical 2-Column Boxes (Y=148, H=124)
-		// Left Box: Player Identity (W=326, H=124)
-		SmoothPanel pnlNickBox = new SmoothPanel(colCard, 10);
-		pnlNickBox.Location = new Point(0, 148);
-		pnlNickBox.Size = new Size(326, 124);
+		ring = new RingGauge();
+		ring.Location = new Point(646, 24);
+		ring.Size = new Size(100, 100);
+		ring.RingColor = colAccent;
+		pnlHeroCard.Controls.Add(ring);
+
+		// 2. Middle: Symmetrical 2-Column Boxes (Y=160, H=128)
+		pnlNickBox = new SmoothPanel(colCard, 10);
+		pnlNickBox.Location = new Point(0, 160);
+		pnlNickBox.Size = new Size(370, 128);
 		pnlNickBox.BorderColor = Color.FromArgb(40, 60, 95);
 		pnlPlay.Controls.Add(pnlNickBox);
 
 		AddLbl(pnlNickBox, "👤  ข้อมูลตัวละคร (PLAYER IDENTITY)", fSub, 14, 10, colAccent);
-		txtNick = AddField(pnlNickBox, "ชื่อเล่น: MyNick_TH", 14, 32, 298);
+		txtNick = AddField(pnlNickBox, "ชื่อเล่น: MyNick_TH", 14, 34, 342);
 
-		RoundedBtn btnProfiles = MakeMiniBtn("👤  โปรไฟล์ชื่อ", 14, 78, 144, 34);
-		btnProfiles.BorderColor = colAccent;
-		btnProfiles.Click += delegate
+		btnNickProfiles = MakeMiniBtn("👤  โปรไฟล์ชื่อ", 14, 84, 166, 34);
+		btnNickProfiles.BorderColor = colAccent;
+		btnNickProfiles.Click += delegate
 		{
-			ShowNickProfilesMenu(btnProfiles);
+			ShowNickProfilesMenu(btnNickProfiles);
 		};
-		pnlNickBox.Controls.Add(btnProfiles);
+		pnlNickBox.Controls.Add(btnNickProfiles);
 
-		RoundedBtn btnRand = MakeMiniBtn("🎲  สุ่มชื่อ", 168, 78, 144, 34);
-		btnRand.BorderColor = Color.FromArgb(40, 60, 95);
-		btnRand.Click += delegate
+		btnNickRand = MakeMiniBtn("🎲  สุ่มชื่อ", 190, 84, 166, 34);
+		btnNickRand.BorderColor = Color.FromArgb(40, 60, 95);
+		btnNickRand.Click += delegate
 		{
 			ForceText(txtNick, RandomNick());
 		};
-		pnlNickBox.Controls.Add(btnRand);
+		pnlNickBox.Controls.Add(btnNickRand);
 
-		// Right Box: Target Server (W=326, H=124)
-		SmoothPanel pnlSrvBox = new SmoothPanel(colCard, 10);
-		pnlSrvBox.Location = new Point(342, 148);
-		pnlSrvBox.Size = new Size(326, 124);
+		// Right Box: Target Server
+		pnlSrvBox = new SmoothPanel(colCard, 10);
+		pnlSrvBox.Location = new Point(386, 160);
+		pnlSrvBox.Size = new Size(370, 128);
 		pnlSrvBox.BorderColor = Color.FromArgb(40, 60, 95);
 		pnlPlay.Controls.Add(pnlSrvBox);
 
 		AddLbl(pnlSrvBox, "🌐  ปลายทางเซิร์ฟเวอร์ & รหัสผ่าน (SERVER ADDRESS)", fSub, 14, 10, colAccent);
-		txtIp = AddField(pnlSrvBox, "127.0.0.1", 14, 32, 130);
-		txtPort = AddField(pnlSrvBox, "7777", 150, 32, 66);
-		txtServerPass = AddField(pnlSrvBox, "รหัส (ถ้ามี)", 222, 32, 90);
+		txtIp = AddField(pnlSrvBox, "127.0.0.1", 14, 34, 150);
+		txtPort = AddField(pnlSrvBox, "7777", 170, 34, 68);
+		txtServerPass = AddField(pnlSrvBox, "รหัส (ถ้ามี)", 244, 34, 112);
 		txtServerPass.GotFocus += delegate
 		{
 			if (txtServerPass.ForeColor == colText && txtServerPass.Text.Length > 0)
@@ -176,7 +195,7 @@ internal partial class LauncherForm
 		};
 
 		swAuto = new ToggleSwitch();
-		swAuto.Location = new Point(16, 82);
+		swAuto.Location = new Point(16, 86);
 		swAuto.CheckedChanged += delegate
 		{
 			if (cfgReady)
@@ -185,13 +204,13 @@ internal partial class LauncherForm
 			}
 		};
 		pnlSrvBox.Controls.Add(swAuto);
-		AddLbl(pnlSrvBox, "เชื่อมต่ออัตโนมัติเมื่อเปิด Launcher", fSmall, 68, 85, colSub);
+		lblAutoConnect = AddLbl(pnlSrvBox, "เชื่อมต่ออัตโนมัติเมื่อเปิด Launcher", fSmall, 68, 90, colSub);
 
-		// 3. Primary Action Button: Full-Width Cyber Yellow (Y=282, H=50, W=668)
+		// 3. Primary Action Button: Full-Width Cyber Yellow (Y=302, H=54, W=756)
 		btnConnect = new RoundedBtn("▶   เข้าสู่เกม (LAUNCH GAME)", colYellow, colYellowHi, Color.FromArgb(11, 14, 20), 12, new Font("Segoe UI", 13.5f, FontStyle.Bold));
 		btnConnect.BorderColor = Color.FromArgb(255, 245, 120);
-		btnConnect.Location = new Point(0, 282);
-		btnConnect.Size = new Size(668, 50);
+		btnConnect.Location = new Point(0, 302);
+		btnConnect.Size = new Size(756, 54);
 		btnConnect.Click += delegate
 		{
 			ConnectToServer();
@@ -199,11 +218,11 @@ internal partial class LauncherForm
 		pnlPlay.Controls.Add(btnConnect);
 		base.AcceptButton = btnConnect;
 
-		// 4. Quick Access Server Chips (Y=344, H=42, W=668)
-		AddLbl(pnlPlay, "⭐  เซิร์ฟเวอร์โปรด / เข้าเร็ว:", fSub, 0, 344, colSub);
+		// 4. Quick Access Server Chips (Y=370..436, W=756)
+		lblQuickTitle = AddLbl(pnlPlay, "⭐  เซิร์ฟเวอร์โปรด / เข้าเร็ว:", fSub, 0, 370, colSub);
 		chipPanel = new TransPanel();
-		chipPanel.Location = new Point(0, 368);
-		chipPanel.Size = new Size(668, 42);
+		chipPanel.Location = new Point(0, 392);
+		chipPanel.Size = new Size(756, 44);
 		pnlPlay.Controls.Add(chipPanel);
 	}
 
@@ -287,6 +306,143 @@ internal partial class LauncherForm
 		cms.Show(anchor, new Point(0, anchor.Height));
 	}
 
+	private void LayoutPlayPage(int pageW, int pageH)
+	{
+		if (pnlHeroCard == null) return;
+
+		int extraH = Math.Max(0, pageH - DpiHelper.S(460));
+		int heroH = DpiHelper.S(148) + Math.Min(DpiHelper.S(40), extraH / 3);
+		int gapY = DpiHelper.S(12) + Math.Min(DpiHelper.S(8), extraH / 6);
+		int gapX = DpiHelper.S(16);
+
+		// 1. Hero Card
+		pnlHeroCard.Location = new Point(0, 0);
+		pnlHeroCard.Size = new Size(pageW, heroH);
+
+		int pad = DpiHelper.S(16);
+		int ringSz = Math.Min(DpiHelper.S(108), heroH - DpiHelper.S(36));
+		ring.Size = new Size(ringSz, ringSz);
+		ring.Location = new Point(pageW - pad - ringSz, (heroH - ringSz) / 2);
+
+		int refBtnSz = DpiHelper.S(36);
+		btnHeroRefresh.Size = new Size(refBtnSz, refBtnSz);
+		btnHeroRefresh.Location = new Point(ring.Left - DpiHelper.S(12) - refBtnSz, (heroH - refBtnSz) / 2);
+
+		int infoW = Math.Max(DpiHelper.S(250), Math.Min(DpiHelper.S(420), (int)(pageW * 0.48)));
+		int labelX = DpiHelper.S(20);
+		int textMaxW = infoW - labelX - DpiHelper.S(8);
+		lblHeroName.Location = new Point(labelX, DpiHelper.S(14));
+		lblHeroName.Size = new Size(textMaxW, DpiHelper.S(28));
+		lblHeroIp.Location = new Point(labelX, DpiHelper.S(44));
+		lblHeroMode.Location = new Point(labelX, DpiHelper.S(68));
+		lblHeroMode.Size = new Size(textMaxW, DpiHelper.S(20));
+		lblHeroPing.Location = new Point(labelX, DpiHelper.S(92));
+		if (lblHeroTip != null)
+		{
+			lblHeroTip.Location = new Point(labelX, heroH - DpiHelper.S(26));
+			lblHeroTip.Size = new Size(textMaxW, DpiHelper.S(18));
+		}
+
+		int sparkX = infoW + DpiHelper.S(6);
+		int sparkW = Math.Max(DpiHelper.S(120), btnHeroRefresh.Left - DpiHelper.S(12) - sparkX);
+		heroSpark.Location = new Point(sparkX, DpiHelper.S(18));
+		heroSpark.Size = new Size(sparkW, heroH - DpiHelper.S(36));
+
+		// 2. Symmetrical 2-Column Middle Cards
+		int midY = heroH + gapY;
+		int midH = DpiHelper.S(128);
+		int leftW = (pageW - gapX) / 2;
+		int rightW = pageW - leftW - gapX;
+
+		pnlNickBox.Location = new Point(0, midY);
+		pnlNickBox.Size = new Size(leftW, midH);
+		int inPad = DpiHelper.S(14);
+		int boxH = DpiHelper.S(42);
+		int btnH = DpiHelper.S(34);
+		if (txtNick.Parent != null)
+		{
+			txtNick.Parent.Location = new Point(inPad, DpiHelper.S(34));
+			txtNick.Parent.Size = new Size(leftW - inPad * 2, boxH);
+		}
+		int halfBtnW = (leftW - inPad * 2 - DpiHelper.S(10)) / 2;
+		btnNickProfiles.Location = new Point(inPad, DpiHelper.S(84));
+		btnNickProfiles.Size = new Size(halfBtnW, btnH);
+		btnNickRand.Location = new Point(inPad + halfBtnW + DpiHelper.S(10), DpiHelper.S(84));
+		btnNickRand.Size = new Size(leftW - inPad - btnNickRand.Left, btnH);
+
+		pnlSrvBox.Location = new Point(leftW + gapX, midY);
+		pnlSrvBox.Size = new Size(rightW, midH);
+		int srvInnerW = rightW - inPad * 2;
+		int fieldGap = DpiHelper.S(6);
+		int portW = DpiHelper.S(68);
+		int ipW = Math.Max(DpiHelper.S(105), (int)((srvInnerW - portW - fieldGap * 2) * 0.57));
+		int passW = Math.Max(DpiHelper.S(70), srvInnerW - ipW - portW - fieldGap * 2);
+		if (txtIp.Parent != null)
+		{
+			txtIp.Parent.Location = new Point(inPad, DpiHelper.S(34));
+			txtIp.Parent.Size = new Size(ipW, boxH);
+		}
+		if (txtPort.Parent != null)
+		{
+			txtPort.Parent.Location = new Point(inPad + ipW + fieldGap, DpiHelper.S(34));
+			txtPort.Parent.Size = new Size(portW, boxH);
+		}
+		if (txtServerPass.Parent != null)
+		{
+			txtServerPass.Parent.Location = new Point(inPad + ipW + portW + fieldGap * 2, DpiHelper.S(34));
+			txtServerPass.Parent.Size = new Size(passW, boxH);
+		}
+		swAuto.Location = new Point(DpiHelper.S(16), DpiHelper.S(86));
+		swAuto.Size = new Size(DpiHelper.S(44), DpiHelper.S(24));
+		if (lblAutoConnect != null)
+		{
+			lblAutoConnect.Location = new Point(DpiHelper.S(68), DpiHelper.S(90));
+		}
+
+		// 3. Launch Button
+		int connY = midY + midH + gapY;
+		int connH = DpiHelper.S(54) + Math.Min(DpiHelper.S(8), extraH / 8);
+		btnConnect.Location = new Point(0, connY);
+		btnConnect.Size = new Size(pageW, connH);
+
+		// 4. Quick Access Server Chips
+		int quickY = connY + connH + gapY;
+		if (lblQuickTitle != null)
+		{
+			lblQuickTitle.Location = new Point(0, quickY);
+		}
+		chipPanel.Location = new Point(0, quickY + DpiHelper.S(22));
+		chipPanel.Size = new Size(pageW, DpiHelper.S(44));
+		LayoutQuickChips();
+	}
+
+	private void LayoutQuickChips()
+	{
+		if (chipPanel == null || chipPanel.Controls.Count == 0) return;
+		int count = chipPanel.Controls.Count;
+		int gap = DpiHelper.S(10);
+		int chipW = Math.Max(DpiHelper.S(140), (chipPanel.Width - gap * (count - 1)) / Math.Max(3, count));
+		int chipH = DpiHelper.S(36);
+		for (int i = 0; i < count; i++)
+		{
+			Control c = chipPanel.Controls[i];
+			c.Location = new Point(i * (chipW + gap), DpiHelper.S(3));
+			c.Size = new Size(chipW, chipH);
+		}
+	}
+
+	private void ResumePlaySpark()
+	{
+		if (txtIp == null || txtPort == null) return;
+		string ip = FieldVal(txtIp);
+		string portStr = FieldVal(txtPort);
+		int p;
+		if (ip.Length > 0 && ValidHost(ip) && int.TryParse(portStr, out p) && p > 0 && p <= 65535)
+		{
+			StartActiveSpark(ip, p);
+		}
+	}
+
 	private void RebuildChips()
 	{
 		if (chipPanel == null)
@@ -300,7 +456,7 @@ internal partial class LauncherForm
 		int num = 0;
 		foreach (ServerEntry item in list)
 		{
-			if (num < 3)
+			if (num < 4)
 			{
 				ServerEntry ce = item;
 				string text = ((ce.Name.Length > 0) ? ce.Name : (ce.Ip + ":" + ce.Port));
@@ -308,7 +464,7 @@ internal partial class LauncherForm
 				{
 					text = text.Substring(0, 23) + "…";
 				}
-				RoundedBtn roundedBtn = MakeMiniBtn(text, num * 206, 3, 198, 34);
+				RoundedBtn roundedBtn = MakeMiniBtn(text, num * DpiHelper.S(184), DpiHelper.S(3), DpiHelper.S(176), DpiHelper.S(36));
 				roundedBtn.Click += delegate
 				{
 					ForceText(txtIp, ce.Ip);
@@ -322,6 +478,7 @@ internal partial class LauncherForm
 			}
 			break;
 		}
+		LayoutQuickChips();
 	}
 
 	private void QueryPlayServer()
@@ -329,10 +486,11 @@ internal partial class LauncherForm
 		string ip = FieldVal(txtIp);
 		string text = FieldVal(txtPort);
 		int p;
-		if (ip.Length == 0 || !ValidHost(ip) || !int.TryParse(text, out p))
+		if (ip.Length == 0 || !ValidHost(ip) || !int.TryParse(text, out p) || p <= 0 || p > 65535)
 		{
 			lblHeroName.Text = "IP / Port ไม่ถูกต้อง";
 			lblHeroName.ForeColor = Color.FromArgb(255, 120, 120);
+			if (btnConnect != null) btnConnect.PulseGlow = false;
 			return;
 		}
 		string key = ip + ":" + text;
@@ -346,6 +504,8 @@ internal partial class LauncherForm
 		ring.Line1 = "...";
 		ring.Line2 = "ตรวจสอบ";
 		ring.Invalidate();
+		if (btnConnect != null) btnConnect.PulseGlow = false;
+		StartActiveSpark(ip, p);
 		ThreadPool.QueueUserWorkItem(delegate
 		{
 			QueryResult qr = core.QueryServer(ip, p);
@@ -390,6 +550,7 @@ internal partial class LauncherForm
 			ring.Line2 = "ผู้เล่น";
 			ring.RingColor = colAccent;
 			ring.Invalidate();
+			if (btnConnect != null) btnConnect.PulseGlow = true;
 			int num = key.LastIndexOf(':');
 			if (num <= 0)
 			{
@@ -397,6 +558,11 @@ internal partial class LauncherForm
 			}
 			string ip = key.Substring(0, num);
 			string port = key.Substring(num + 1);
+			int pNum;
+			if (int.TryParse(port, out pNum) && pNum > 0 && pNum <= 65535)
+			{
+				StartActiveSpark(ip, pNum);
+			}
 			ServerEntry serverEntry = FindEntry(ip, port, false);
 			if (serverEntry != null)
 			{
@@ -419,6 +585,7 @@ internal partial class LauncherForm
 			ring.Line1 = "--";
 			ring.Line2 = "ออฟไลน์";
 			ring.Invalidate();
+			if (btnConnect != null) btnConnect.PulseGlow = false;
 		}
 	}
 

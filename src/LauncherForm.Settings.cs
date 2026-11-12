@@ -9,56 +9,75 @@ using System.Windows.Forms;
 
 internal partial class LauncherForm
 {
+	private SmoothPanel pnlSetGfx;
+	private SmoothPanel pnlSetGame;
+	private SmoothPanel pnlSetHealth;
+	private RoundedBtn[] setThemeBtns;
+	private RoundedBtn btnSetBrowse;
+	private RoundedBtn btnSetOpenFolder;
+	private RoundedBtn btnSetModFolder;
+	private RoundedBtn btnSetBackup;
+	private RoundedBtn btnSetRestore;
+	private RoundedBtn btnSetFixCrash;
+	private RoundedBtn btnHealthRecheck;
+	private Label lblSetModsBanner;
+	private Label lblSetSound;
+	private RoundedBtn btnSetTestSound;
+	private Label lblSetDiscord;
+	private Label lblSetSlot;
+	private Label lblSetAltTab;
+	private Label lblSetClose;
+
 	private void BuildSetPage()
 	{
-		// 1. Left Card: Graphics, FPS & Theme (X=0, Y=0, W=326, H=258)
-		SmoothPanel pnlGfx = new SmoothPanel(colCard, 10);
-		pnlGfx.Location = new Point(0, 0);
-		pnlGfx.Size = new Size(326, 258);
-		pnlGfx.BorderColor = Color.FromArgb(40, 60, 95);
-		pnlSet.Controls.Add(pnlGfx);
+		// 1. Left Card: Graphics, FPS & Theme
+		pnlSetGfx = new SmoothPanel(colCard, 10);
+		pnlSetGfx.Location = new Point(0, 0);
+		pnlSetGfx.Size = new Size(326, 258);
+		pnlSetGfx.BorderColor = Color.FromArgb(40, 60, 95);
+		pnlSet.Controls.Add(pnlSetGfx);
 
-		AddLbl(pnlGfx, "🎮  ภาพและกราฟิก (GRAPHICS & FPS)", fSub, 14, 10, colAccent);
+		AddLbl(pnlSetGfx, "🎮  ภาพและกราฟิก (GRAPHICS & FPS)", fSub, 14, 10, colAccent);
 
-		AddLbl(pnlGfx, "โทนภาพ SkyGfx:", fSmall, 14, 34, colSub);
+		AddLbl(pnlSetGfx, "โทนภาพ SkyGfx:", fSmall, 14, 34, colSub);
 		btnSgPs2 = MakeMiniBtn("PS2 Classic", 14, 52, 144, 28);
 		btnSgPs2.Click += delegate { ApplySkyGfxPreset("ps2"); };
-		pnlGfx.Controls.Add(btnSgPs2);
+		pnlSetGfx.Controls.Add(btnSgPs2);
 
 		btnSgPc = MakeMiniBtn("PC Original", 166, 52, 146, 28);
 		btnSgPc.Click += delegate { ApplySkyGfxPreset("pc"); };
-		pnlGfx.Controls.Add(btnSgPc);
+		pnlSetGfx.Controls.Add(btnSgPc);
 
 		btnSgMob = MakeMiniBtn("Mobile", 14, 84, 144, 28);
 		btnSgMob.Click += delegate { ApplySkyGfxPreset("mobile"); };
-		pnlGfx.Controls.Add(btnSgMob);
+		pnlSetGfx.Controls.Add(btnSgMob);
 
 		btnSgOff = MakeMiniBtn("ปิดใช้งาน", 166, 84, 146, 28);
 		btnSgOff.Click += delegate { ApplySkyGfxPreset("off"); };
-		pnlGfx.Controls.Add(btnSgOff);
+		pnlSetGfx.Controls.Add(btnSgOff);
 
-		AddLbl(pnlGfx, "จำกัดเฟรมเรต (FPS Limit):", fSmall, 14, 118, colSub);
+		AddLbl(pnlSetGfx, "จำกัดเฟรมเรต (FPS Limit):", fSmall, 14, 118, colSub);
 		btnFps60 = MakeMiniBtn("60", 14, 138, 54, 28);
 		btnFps60.Click += delegate { ApplyFpsLimit(60); };
-		pnlGfx.Controls.Add(btnFps60);
+		pnlSetGfx.Controls.Add(btnFps60);
 
 		btnFps90 = MakeMiniBtn("90", 74, 138, 54, 28);
 		btnFps90.Click += delegate { ApplyFpsLimit(90); };
-		pnlGfx.Controls.Add(btnFps90);
+		pnlSetGfx.Controls.Add(btnFps90);
 
 		btnFps120 = MakeMiniBtn("120", 134, 138, 54, 28);
 		btnFps120.Click += delegate { ApplyFpsLimit(120); };
-		pnlGfx.Controls.Add(btnFps120);
+		pnlSetGfx.Controls.Add(btnFps120);
 
 		btnFps144 = MakeMiniBtn("144", 194, 138, 54, 28);
 		btnFps144.Click += delegate { ApplyFpsLimit(144); };
-		pnlGfx.Controls.Add(btnFps144);
+		pnlSetGfx.Controls.Add(btnFps144);
 
 		btnFpsMax = MakeMiniBtn("Max", 254, 138, 58, 28);
 		btnFpsMax.Click += delegate { ApplyFpsLimit(0); };
-		pnlGfx.Controls.Add(btnFpsMax);
+		pnlSetGfx.Controls.Add(btnFpsMax);
 
-		AddLbl(pnlGfx, "สีธีมหลัก (THEME ACCENT):", fSmall, 14, 174, colSub);
+		AddLbl(pnlSetGfx, "สีธีมหลัก (THEME ACCENT):", fSmall, 14, 174, colSub);
 		Color[] array = new Color[6]
 		{
 			Color.FromArgb(51, 204, 255),
@@ -68,6 +87,7 @@ internal partial class LauncherForm
 			Color.FromArgb(138, 43, 226),
 			Color.FromArgb(0, 230, 255)
 		};
+		setThemeBtns = new RoundedBtn[array.Length];
 		for (int i = 0; i < array.Length; i++)
 		{
 			Color c = array[i];
@@ -81,32 +101,33 @@ internal partial class LauncherForm
 				SaveConfig();
 				ToastOk("เปลี่ยนสีธีมแล้ว");
 			};
-			pnlGfx.Controls.Add(roundedBtn);
+			pnlSetGfx.Controls.Add(roundedBtn);
+			setThemeBtns[i] = roundedBtn;
 		}
 
-		// 2. Right Card: Game Path & Mods (X=342, Y=0, W=326, H=258)
-		SmoothPanel pnlMods = new SmoothPanel(colCard, 10);
-		pnlMods.Location = new Point(342, 0);
-		pnlMods.Size = new Size(326, 258);
-		pnlMods.BorderColor = Color.FromArgb(40, 60, 95);
-		pnlSet.Controls.Add(pnlMods);
+		// 2. Right Card: Game Path & Mods
+		pnlSetGame = new SmoothPanel(colCard, 10);
+		pnlSetGame.Location = new Point(342, 0);
+		pnlSetGame.Size = new Size(326, 258);
+		pnlSetGame.BorderColor = Color.FromArgb(40, 60, 95);
+		pnlSet.Controls.Add(pnlSetGame);
 
-		AddLbl(pnlMods, "📁  ไฟล์เกมและม็อด (GAME & MODS)", fSub, 14, 10, colAccent);
+		AddLbl(pnlSetGame, "📁  ไฟล์เกมและม็อด (GAME & MODS)", fSub, 14, 10, colAccent);
 
-		AddLbl(pnlMods, "โฟลเดอร์ติดตั้ง GTA San Andreas:", fSmall, 14, 34, colSub);
-		txtPath = AddField(pnlMods, "", 14, 52, 214);
-		RoundedBtn btnBrowse = MakeMiniBtn("เลือก...", 234, 52, 78, 42);
-		btnBrowse.BorderColor = colAccent;
-		btnBrowse.Click += delegate
+		AddLbl(pnlSetGame, "โฟลเดอร์ติดตั้ง GTA San Andreas:", fSmall, 14, 34, colSub);
+		txtPath = AddField(pnlSetGame, "", 14, 52, 214);
+		btnSetBrowse = MakeMiniBtn("เลือก...", 234, 52, 78, 42);
+		btnSetBrowse.BorderColor = colAccent;
+		btnSetBrowse.Click += delegate
 		{
 			BrowseGameDir();
 		};
-		pnlMods.Controls.Add(btnBrowse);
+		pnlSetGame.Controls.Add(btnSetBrowse);
 
-		AddLbl(pnlMods, "ทางลัดเปิดโฟลเดอร์:", fSmall, 14, 106, colSub);
-		RoundedBtn btnOpenFolder = MakeMiniBtn("📂  โฟลเดอร์เกม", 14, 126, 144, 32);
-		btnOpenFolder.BorderColor = Color.FromArgb(40, 60, 95);
-		btnOpenFolder.Click += delegate
+		AddLbl(pnlSetGame, "ทางลัดเปิดโฟลเดอร์:", fSmall, 14, 106, colSub);
+		btnSetOpenFolder = MakeMiniBtn("📂  โฟลเดอร์เกม", 14, 126, 144, 32);
+		btnSetOpenFolder.BorderColor = Color.FromArgb(40, 60, 95);
+		btnSetOpenFolder.Click += delegate
 		{
 			try
 			{
@@ -116,11 +137,11 @@ internal partial class LauncherForm
 			{
 			}
 		};
-		pnlMods.Controls.Add(btnOpenFolder);
+		pnlSetGame.Controls.Add(btnSetOpenFolder);
 
-		RoundedBtn btnModFolder = MakeMiniBtn("📦  ModLoader", 166, 126, 146, 32);
-		btnModFolder.BorderColor = colAccent;
-		btnModFolder.Click += delegate
+		btnSetModFolder = MakeMiniBtn("📦  ModLoader", 166, 126, 146, 32);
+		btnSetModFolder.BorderColor = colAccent;
+		btnSetModFolder.Click += delegate
 		{
 			try
 			{
@@ -135,41 +156,41 @@ internal partial class LauncherForm
 			{
 			}
 		};
-		pnlMods.Controls.Add(btnModFolder);
+		pnlSetGame.Controls.Add(btnSetModFolder);
 
-		AddLbl(pnlMods, "การสำรองและกู้คืนไฟล์ม็อด:", fSmall, 14, 168, colSub);
-		RoundedBtn btnBackup = MakeMiniBtn("💾  สำรองม็อด", 14, 188, 144, 30);
-		btnBackup.BorderColor = Color.FromArgb(40, 60, 95);
-		btnBackup.Click += delegate
+		AddLbl(pnlSetGame, "การสำรองและกู้คืนไฟล์ม็อด:", fSmall, 14, 168, colSub);
+		btnSetBackup = MakeMiniBtn("💾  สำรองม็อด", 14, 188, 144, 30);
+		btnSetBackup.BorderColor = Color.FromArgb(40, 60, 95);
+		btnSetBackup.Click += delegate
 		{
 			CreateModBackup();
 		};
-		pnlMods.Controls.Add(btnBackup);
+		pnlSetGame.Controls.Add(btnSetBackup);
 
-		RoundedBtn btnRestore = MakeMiniBtn("↺  คืนค่าม็อดเดิม", 166, 188, 146, 30);
-		btnRestore.BorderColor = Color.FromArgb(40, 60, 95);
-		btnRestore.Click += delegate
+		btnSetRestore = MakeMiniBtn("↺  คืนค่าม็อดเดิม", 166, 188, 146, 30);
+		btnSetRestore.BorderColor = Color.FromArgb(40, 60, 95);
+		btnSetRestore.Click += delegate
 		{
 			RestoreModBackup();
 		};
-		pnlMods.Controls.Add(btnRestore);
+		pnlSetGame.Controls.Add(btnSetRestore);
 
-		RoundedBtn btnFixCrash = MakeMiniBtn("🛠️  แก้เกมเด้ง (รีเซ็ต gta_sa.set)", 14, 222, 298, 28);
-		btnFixCrash.BorderColor = Color.FromArgb(243, 156, 18);
-		btnFixCrash.Click += delegate
+		btnSetFixCrash = MakeMiniBtn("🛠️  แก้เกมเด้ง (รีเซ็ต gta_sa.set)", 14, 222, 298, 28);
+		btnSetFixCrash.BorderColor = Color.FromArgb(243, 156, 18);
+		btnSetFixCrash.Click += delegate
 		{
 			ResetGameSettings();
 		};
-		pnlMods.Controls.Add(btnFixCrash);
+		pnlSetGame.Controls.Add(btnSetFixCrash);
 
-		// 3. Bottom Card: System Integrity & Health (X=0, Y=266, W=668, H=168)
-		SmoothPanel pnlHealth = new SmoothPanel(colCard, 10);
-		pnlHealth.Location = new Point(0, 266);
-		pnlHealth.Size = new Size(668, 168);
-		pnlHealth.BorderColor = Color.FromArgb(40, 60, 95);
-		pnlSet.Controls.Add(pnlHealth);
+		// 3. Bottom Card: System Integrity & Health
+		pnlSetHealth = new SmoothPanel(colCard, 10);
+		pnlSetHealth.Location = new Point(0, 266);
+		pnlSetHealth.Size = new Size(668, 168);
+		pnlSetHealth.BorderColor = Color.FromArgb(40, 60, 95);
+		pnlSet.Controls.Add(pnlSetHealth);
 
-		AddLbl(pnlHealth, "🛡️  ตรวจสอบระบบ & ตัวเลือกการทำงาน (SYSTEM HEALTH & OPTIONS)", fSub, 14, 8, colAccent);
+		AddLbl(pnlSetHealth, "🛡️  ตรวจสอบระบบ & ตัวเลือกการทำงาน (SYSTEM HEALTH & OPTIONS)", fSub, 14, 8, colAccent);
 
 		btnAutoFix = MakeMiniBtn("⚡ แก้ไขอัตโนมัติ", 392, 6, 130, 26);
 		btnAutoFix.BorderColor = Color.FromArgb(40, 60, 95);
@@ -177,25 +198,25 @@ internal partial class LauncherForm
 		{
 			RunAutoFix();
 		};
-		pnlHealth.Controls.Add(btnAutoFix);
+		pnlSetHealth.Controls.Add(btnAutoFix);
 
-		RoundedBtn roundedBtn3 = MakeMiniBtn("↻  ตรวจอีกครั้ง", 530, 6, 124, 26);
-		roundedBtn3.BorderColor = colAccent;
-		roundedBtn3.Click += delegate
+		btnHealthRecheck = MakeMiniBtn("↻  ตรวจอีกครั้ง", 530, 6, 124, 26);
+		btnHealthRecheck.BorderColor = colAccent;
+		btnHealthRecheck.Click += delegate
 		{
 			RunHealthCheck();
 		};
-		pnlHealth.Controls.Add(roundedBtn3);
+		pnlSetHealth.Controls.Add(btnHealthRecheck);
 
 		lblHealth = new Label[5];
-		lblHealth[0] = AddLbl(pnlHealth, "กำลังตรวจสอบ gta_sa.exe...", fSmall, 14, 34, colSub);
-		lblHealth[1] = AddLbl(pnlHealth, "กำลังตรวจสอบ samp.dll...", fSmall, 14, 52, colSub);
-		lblHealth[2] = AddLbl(pnlHealth, "กำลังตรวจสอบ ModLoader & CLEO...", fSmall, 14, 70, colSub);
-		lblHealth[3] = AddLbl(pnlHealth, "กำลังตรวจสอบ FramerateVigilante...", fSmall, 340, 34, colSub);
-		lblHealth[4] = AddLbl(pnlHealth, "กำลังตรวจสอบ SkyGfx...", fSmall, 340, 52, colSub);
-		lblEngine = AddLbl(pnlHealth, "Engine: " + core.EngineName, fSmall, 340, 70, colSub);
+		lblHealth[0] = AddLbl(pnlSetHealth, "กำลังตรวจสอบ gta_sa.exe...", fSmall, 14, 34, colSub);
+		lblHealth[1] = AddLbl(pnlSetHealth, "กำลังตรวจสอบ samp.dll...", fSmall, 14, 52, colSub);
+		lblHealth[2] = AddLbl(pnlSetHealth, "กำลังตรวจสอบ ModLoader & CLEO...", fSmall, 14, 70, colSub);
+		lblHealth[3] = AddLbl(pnlSetHealth, "กำลังตรวจสอบ FramerateVigilante...", fSmall, 340, 34, colSub);
+		lblHealth[4] = AddLbl(pnlSetHealth, "กำลังตรวจสอบ SkyGfx...", fSmall, 340, 52, colSub);
+		lblEngine = AddLbl(pnlSetHealth, "Engine: " + core.EngineName, fSmall, 340, 70, colSub);
 
-		AddLbl(pnlHealth, "ม็อดหลักที่ทำงาน: FramerateVigilante • ModLoader v0.3.10 • CLEO 4.4 • SkyGfx • SilentPatch • 2DFX", fSmall, 14, 88, colSub);
+		lblSetModsBanner = AddLbl(pnlSetHealth, "ม็อดหลักที่ทำงาน: FramerateVigilante • ModLoader v0.3.10 • CLEO 4.4 • SkyGfx • SilentPatch • 2DFX", fSmall, 14, 88, colSub);
 
 		swSoundFx = new ToggleSwitch();
 		swSoundFx.Location = new Point(14, 108);
@@ -208,16 +229,16 @@ internal partial class LauncherForm
 				SaveConfig();
 			}
 		};
-		pnlHealth.Controls.Add(swSoundFx);
-		AddLbl(pnlHealth, "🔊  เสียงไซเบอร์ (Audio FX)", fSmall, 66, 112, colSub);
+		pnlSetHealth.Controls.Add(swSoundFx);
+		lblSetSound = AddLbl(pnlSetHealth, "🔊  เสียงไซเบอร์ (Audio FX)", fSmall, 66, 112, colSub);
 
-		RoundedBtn btnTestSound = MakeMiniBtn("▶ ฟังเสียง", 204, 108, 64, 22);
-		btnTestSound.BorderColor = colAccent;
-		btnTestSound.Click += delegate
+		btnSetTestSound = MakeMiniBtn("▶ ฟังเสียง", 204, 108, 64, 22);
+		btnSetTestSound.BorderColor = colAccent;
+		btnSetTestSound.Click += delegate
 		{
 			CyberAudio.PlayAlert();
 		};
-		pnlHealth.Controls.Add(btnTestSound);
+		pnlSetHealth.Controls.Add(btnSetTestSound);
 
 		swDiscordRpc = new ToggleSwitch();
 		swDiscordRpc.Location = new Point(340, 108);
@@ -230,8 +251,8 @@ internal partial class LauncherForm
 				SaveConfig();
 			}
 		};
-		pnlHealth.Controls.Add(swDiscordRpc);
-		AddLbl(pnlHealth, "🎮  Discord Rich Presence", fSmall, 392, 112, colSub);
+		pnlSetHealth.Controls.Add(swDiscordRpc);
+		lblSetDiscord = AddLbl(pnlSetHealth, "🎮  Discord Rich Presence", fSmall, 392, 112, colSub);
 
 		swAutoSlot = new ToggleSwitch();
 		swAutoSlot.Location = new Point(14, 138);
@@ -243,8 +264,8 @@ internal partial class LauncherForm
 				SaveConfig();
 			}
 		};
-		pnlHealth.Controls.Add(swAutoSlot);
-		AddLbl(pnlHealth, "⚡  ออโต้จอยเมื่อห้องว่าง", fSmall, 66, 142, colSub);
+		pnlSetHealth.Controls.Add(swAutoSlot);
+		lblSetSlot = AddLbl(pnlSetHealth, "⚡  ออโต้จอยเมื่อห้องว่าง", fSmall, 66, 142, colSub);
 
 		swNoPauseAltTab = new ToggleSwitch();
 		swNoPauseAltTab.Location = new Point(230, 138);
@@ -255,8 +276,8 @@ internal partial class LauncherForm
 				ApplyNoPauseAltTab(swNoPauseAltTab.Checked);
 			}
 		};
-		pnlHealth.Controls.Add(swNoPauseAltTab);
-		AddLbl(pnlHealth, "🖥️  ไม่ค้างตอนพับจอ (Alt+Tab)", fSmall, 282, 142, colSub);
+		pnlSetHealth.Controls.Add(swNoPauseAltTab);
+		lblSetAltTab = AddLbl(pnlSetHealth, "🖥️  ไม่ค้างตอนพับจอ (Alt+Tab)", fSmall, 282, 142, colSub);
 
 		swClose = new ToggleSwitch();
 		swClose.Location = new Point(480, 138);
@@ -267,11 +288,135 @@ internal partial class LauncherForm
 				SaveConfig();
 			}
 		};
-		pnlHealth.Controls.Add(swClose);
-		AddLbl(pnlHealth, "ปิดเมื่อเข้าเกม", fSmall, 532, 142, colSub);
+		pnlSetHealth.Controls.Add(swClose);
+		lblSetClose = AddLbl(pnlSetHealth, "ปิดเมื่อเข้าเกม", fSmall, 532, 142, colSub);
 
 		UpdateSkyGfxButtons();
 		UpdateFpsButtons();
+	}
+
+	private void LayoutSettingsPage(int pageW, int pageH)
+	{
+		if (pnlSetGfx == null || pnlSetGame == null || pnlSetHealth == null) return;
+		int gap = DpiHelper.S(14);
+		int topH = DpiHelper.S(256);
+		int leftW = (pageW - gap) / 2;
+		int rightW = pageW - leftW - gap;
+		int pad = DpiHelper.S(14);
+
+		// 1. Left Card: Graphics & FPS
+		pnlSetGfx.Location = new Point(0, 0);
+		pnlSetGfx.Size = new Size(leftW, topH);
+		int gInner = leftW - pad * 2;
+		int gHalf = (gInner - DpiHelper.S(8)) / 2;
+		int rowH = DpiHelper.S(28);
+		if (btnSgPs2 != null) { btnSgPs2.Location = new Point(pad, DpiHelper.S(52)); btnSgPs2.Size = new Size(gHalf, rowH); }
+		if (btnSgPc != null) { btnSgPc.Location = new Point(pad + gHalf + DpiHelper.S(8), DpiHelper.S(52)); btnSgPc.Size = new Size(gInner - gHalf - DpiHelper.S(8), rowH); }
+		if (btnSgMob != null) { btnSgMob.Location = new Point(pad, DpiHelper.S(84)); btnSgMob.Size = new Size(gHalf, rowH); }
+		if (btnSgOff != null) { btnSgOff.Location = new Point(pad + gHalf + DpiHelper.S(8), DpiHelper.S(84)); btnSgOff.Size = new Size(gInner - gHalf - DpiHelper.S(8), rowH); }
+
+		int fpsGap = DpiHelper.S(6);
+		int fpsW = (gInner - fpsGap * 4) / 5;
+		RoundedBtn[] fpsBtns = new RoundedBtn[] { btnFps60, btnFps90, btnFps120, btnFps144, btnFpsMax };
+		for (int i = 0; i < fpsBtns.Length; i++)
+		{
+			if (fpsBtns[i] != null)
+			{
+				int w = (i == fpsBtns.Length - 1) ? (gInner - (fpsW + fpsGap) * i) : fpsW;
+				fpsBtns[i].Location = new Point(pad + i * (fpsW + fpsGap), DpiHelper.S(138));
+				fpsBtns[i].Size = new Size(w, rowH);
+			}
+		}
+
+		if (setThemeBtns != null && setThemeBtns.Length > 0)
+		{
+			int swGap = DpiHelper.S(8);
+			int swW = (gInner - swGap * (setThemeBtns.Length - 1)) / setThemeBtns.Length;
+			for (int i = 0; i < setThemeBtns.Length; i++)
+			{
+				if (setThemeBtns[i] != null)
+				{
+					int w = (i == setThemeBtns.Length - 1) ? (gInner - (swW + swGap) * i) : swW;
+					setThemeBtns[i].Location = new Point(pad + i * (swW + swGap), DpiHelper.S(198));
+					setThemeBtns[i].Size = new Size(w, DpiHelper.S(26));
+				}
+			}
+		}
+
+		// 2. Right Card: Game Path & Mods
+		pnlSetGame.Location = new Point(leftW + gap, 0);
+		pnlSetGame.Size = new Size(rightW, topH);
+		int rInner = rightW - pad * 2;
+		int browseW = DpiHelper.S(78);
+		if (txtPath != null && txtPath.Parent != null)
+		{
+			txtPath.Parent.Location = new Point(pad, DpiHelper.S(52));
+			txtPath.Parent.Size = new Size(Math.Max(DpiHelper.S(120), rInner - browseW - DpiHelper.S(6)), DpiHelper.S(42));
+		}
+		if (btnSetBrowse != null)
+		{
+			btnSetBrowse.Location = new Point(rightW - pad - browseW, DpiHelper.S(52));
+			btnSetBrowse.Size = new Size(browseW, DpiHelper.S(42));
+		}
+		int rHalf = (rInner - DpiHelper.S(8)) / 2;
+		if (btnSetOpenFolder != null) { btnSetOpenFolder.Location = new Point(pad, DpiHelper.S(126)); btnSetOpenFolder.Size = new Size(rHalf, DpiHelper.S(32)); }
+		if (btnSetModFolder != null) { btnSetModFolder.Location = new Point(pad + rHalf + DpiHelper.S(8), DpiHelper.S(126)); btnSetModFolder.Size = new Size(rInner - rHalf - DpiHelper.S(8), DpiHelper.S(32)); }
+		if (btnSetBackup != null) { btnSetBackup.Location = new Point(pad, DpiHelper.S(186)); btnSetBackup.Size = new Size(rHalf, DpiHelper.S(30)); }
+		if (btnSetRestore != null) { btnSetRestore.Location = new Point(pad + rHalf + DpiHelper.S(8), DpiHelper.S(186)); btnSetRestore.Size = new Size(rInner - rHalf - DpiHelper.S(8), DpiHelper.S(30)); }
+		if (btnSetFixCrash != null) { btnSetFixCrash.Location = new Point(pad, DpiHelper.S(220)); btnSetFixCrash.Size = new Size(rInner, DpiHelper.S(28)); }
+
+		// 3. Bottom Card: System Health & Options
+		int healthY = topH + DpiHelper.S(10);
+		int healthH = Math.Max(DpiHelper.S(172), pageH - healthY);
+		pnlSetHealth.Location = new Point(0, healthY);
+		pnlSetHealth.Size = new Size(pageW, healthH);
+
+		int reW = DpiHelper.S(124);
+		int afW = DpiHelper.S(130);
+		if (btnHealthRecheck != null)
+		{
+			btnHealthRecheck.Location = new Point(pageW - pad - reW, DpiHelper.S(6));
+			btnHealthRecheck.Size = new Size(reW, DpiHelper.S(26));
+		}
+		if (btnAutoFix != null)
+		{
+			btnAutoFix.Location = new Point(pageW - pad - reW - DpiHelper.S(8) - afW, DpiHelper.S(6));
+			btnAutoFix.Size = new Size(afW, DpiHelper.S(26));
+		}
+
+		int col2X = Math.Max(DpiHelper.S(340), pageW / 2);
+		if (lblHealth != null && lblHealth.Length >= 5)
+		{
+			lblHealth[0].Location = new Point(pad, DpiHelper.S(34));
+			lblHealth[1].Location = new Point(pad, DpiHelper.S(52));
+			lblHealth[2].Location = new Point(pad, DpiHelper.S(70));
+			lblHealth[3].Location = new Point(col2X, DpiHelper.S(34));
+			lblHealth[4].Location = new Point(col2X, DpiHelper.S(52));
+		}
+		if (lblEngine != null) lblEngine.Location = new Point(col2X, DpiHelper.S(70));
+		if (lblSetModsBanner != null) lblSetModsBanner.Location = new Point(pad, DpiHelper.S(88));
+
+		int row1Y = DpiHelper.S(108);
+		int row2Y = DpiHelper.S(138);
+		int swW2 = DpiHelper.S(44);
+		int swH2 = DpiHelper.S(24);
+		int lblOffX = DpiHelper.S(52);
+		int lblOffY = DpiHelper.S(4);
+
+		if (swSoundFx != null) { swSoundFx.Location = new Point(pad, row1Y); swSoundFx.Size = new Size(swW2, swH2); }
+		if (lblSetSound != null) lblSetSound.Location = new Point(pad + lblOffX, row1Y + lblOffY);
+		if (btnSetTestSound != null) { btnSetTestSound.Location = new Point(Math.Max(DpiHelper.S(212), col2X - DpiHelper.S(88)), row1Y); btnSetTestSound.Size = new Size(DpiHelper.S(68), DpiHelper.S(22)); }
+		if (swDiscordRpc != null) { swDiscordRpc.Location = new Point(col2X, row1Y); swDiscordRpc.Size = new Size(swW2, swH2); }
+		if (lblSetDiscord != null) lblSetDiscord.Location = new Point(col2X + lblOffX, row1Y + lblOffY);
+
+		int tCol2X = Math.Max(DpiHelper.S(230), (int)(pageW * 0.34));
+		int tCol3X = Math.Max(DpiHelper.S(480), (int)(pageW * 0.70));
+		if (swAutoSlot != null) { swAutoSlot.Location = new Point(pad, row2Y); swAutoSlot.Size = new Size(swW2, swH2); }
+		if (lblSetSlot != null) lblSetSlot.Location = new Point(pad + lblOffX, row2Y + lblOffY);
+		if (swNoPauseAltTab != null) { swNoPauseAltTab.Location = new Point(tCol2X, row2Y); swNoPauseAltTab.Size = new Size(swW2, swH2); }
+		if (lblSetAltTab != null) lblSetAltTab.Location = new Point(tCol2X + lblOffX, row2Y + lblOffY);
+		if (swClose != null) { swClose.Location = new Point(tCol3X, row2Y); swClose.Size = new Size(swW2, swH2); }
+		if (lblSetClose != null) lblSetClose.Location = new Point(tCol3X + lblOffX, row2Y + lblOffY);
 	}
 
 	private void ApplySkyGfxPreset(string mode)

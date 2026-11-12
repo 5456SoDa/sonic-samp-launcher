@@ -179,11 +179,53 @@ internal partial class LauncherForm : Form
 	private RoundedBtn btnFps144;
 	private RoundedBtn btnFpsMax;
 
+	private Panel pnlSide;
+	private Label lblSideVer;
+	private Label lblFooterRight;
+	private RoundedBtn btnWinMin;
+	private RoundedBtn btnWinMax;
+	private RoundedBtn btnWinClose;
+	private bool dwmApplied;
+	private bool uiBuilt;
+
+	private System.Windows.Forms.Timer sparkPollTimer;
+	private string activeSparkHost = "";
+	private int activeSparkPort;
+	private SparklineGraph heroSpark;
+	private SparklineGraph detSpark;
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct RECT
+	{
+		public int Left;
+		public int Top;
+		public int Right;
+		public int Bottom;
+	}
+
 	[DllImport("user32.dll")]
 	private static extern bool ReleaseCapture();
 
 	[DllImport("user32.dll")]
 	private static extern int SendMessage(IntPtr hWnd, uint msg, int wParam, int lParam);
+
+	[DllImport("user32.dll")]
+	private static extern int GetSystemMetrics(int nIndex);
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool IsZoomed(IntPtr hWnd);
+
+	protected override CreateParams CreateParams
+	{
+		get
+		{
+			CreateParams cp = base.CreateParams;
+			// WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU
+			cp.Style |= 0x00040000 | 0x00020000 | 0x00010000 | 0x00080000;
+			return cp;
+		}
+	}
 
 	public LauncherForm()
 		: this(null)
@@ -192,11 +234,14 @@ internal partial class LauncherForm : Form
 
 	public LauncherForm(string bootUrlArg)
 	{
+		DpiHelper.Init();
 		bootUrl = bootUrlArg;
 		Text = "SA-MP Launcher";
+		base.AutoScaleMode = AutoScaleMode.None;
 		base.FormBorderStyle = FormBorderStyle.None;
 		base.StartPosition = FormStartPosition.CenterScreen;
-		base.Size = new Size(900, 580);
+		base.Size = DpiHelper.Sz(980, 620);
+		base.MinimumSize = DpiHelper.Sz(920, 580);
 		BackColor = colBg;
 		DoubleBuffered = true;
 		base.KeyPreview = true;
@@ -213,13 +258,27 @@ internal partial class LauncherForm : Form
 		fStat = new Font("Segoe UI Semibold", 10f);
 		fBadge = new Font("Segoe UI", 8.5f, FontStyle.Bold);
 		BuildUi();
+		DpiHelper.ScaleControlTree(this);
+		uiBuilt = true;
+		PerformResponsiveLayout();
 		UpdateRegion();
 		LoadConfig();
+	}
+
+	protected override void OnHandleCreated(EventArgs e)
+	{
+		base.OnHandleCreated(e);
+		dwmApplied = core.ApplyDwm(base.Handle);
+		UpdateRegion();
 	}
 
 	protected override void OnResize(EventArgs e)
 	{
 		base.OnResize(e);
+		if (uiBuilt)
+		{
+			PerformResponsiveLayout();
+		}
 		UpdateRegion();
 		RenderBg();
 		Invalidate();
@@ -227,7 +286,18 @@ internal partial class LauncherForm : Form
 
 	private void UpdateRegion()
 	{
-		base.Region = new Region(RoundRect(new Rectangle(0, 0, base.Width, base.Height), 16));
+		if (base.WindowState == FormWindowState.Maximized)
+		{
+			base.Region = null;
+			return;
+		}
+		bool isWin11OrNewer = Environment.OSVersion.Version.Major >= 10 && Environment.OSVersion.Version.Build >= 22000;
+		if (dwmApplied && isWin11OrNewer)
+		{
+			base.Region = null;
+			return;
+		}
+		base.Region = new Region(RoundRect(new Rectangle(0, 0, base.Width, base.Height), DpiHelper.S(14)));
 	}
 
 	protected override void OnPaint(PaintEventArgs e)
@@ -239,9 +309,13 @@ internal partial class LauncherForm : Form
 		{
 			graphics.DrawImage(bgCache, 0, 0);
 		}
-		using (Pen pen = new Pen(Color.FromArgb(60, colAccent), 1f))
+		bool isWin11OrNewer = Environment.OSVersion.Version.Major >= 10 && Environment.OSVersion.Version.Build >= 22000;
+		if (base.WindowState != FormWindowState.Maximized && !(dwmApplied && isWin11OrNewer))
 		{
-			graphics.DrawPath(pen, RoundRect(new Rectangle(0, 0, base.Width - 1, base.Height - 1), 16));
+			using (Pen pen = new Pen(Color.FromArgb(65, colAccent), 1f))
+			{
+				graphics.DrawPath(pen, RoundRect(new Rectangle(0, 0, base.Width - 1, base.Height - 1), DpiHelper.S(14)));
+			}
 		}
 	}
 
@@ -262,26 +336,29 @@ internal partial class LauncherForm : Form
 				graphics.FillRectangle(brush, 0, 0, base.Width, base.Height);
 			}
 
+			int footH = DpiHelper.S(46);
 			using (SolidBrush brush2 = new SolidBrush(Color.FromArgb(9, 12, 17)))
 			{
-				graphics.FillRectangle(brush2, 0, base.Height - 50, base.Width, 50);
+				graphics.FillRectangle(brush2, 0, base.Height - footH, base.Width, footH);
 			}
 
+			int orb1 = DpiHelper.S(440);
 			using (SolidBrush brush3 = new SolidBrush(Color.FromArgb(24, colAccent)))
 			{
-				graphics.FillEllipse(brush3, base.Width - 320, -160, 440, 440);
+				graphics.FillEllipse(brush3, base.Width - DpiHelper.S(320), -DpiHelper.S(160), orb1, orb1);
 			}
+			int orb2 = DpiHelper.S(360);
 			using (SolidBrush brush4 = new SolidBrush(Color.FromArgb(14, colAccent)))
 			{
-				graphics.FillEllipse(brush4, -120, base.Height - 220, 360, 360);
+				graphics.FillEllipse(brush4, -DpiHelper.S(120), base.Height - DpiHelper.S(220), orb2, orb2);
 			}
 
 			using (Pen penGrid = new Pen(Color.FromArgb(18, colAccent), 1f))
 			{
 				for (int i = 0; i < 7; i++)
 				{
-					int offset = i * 32;
-					graphics.DrawLine(penGrid, base.Width - 260 + offset, 0, base.Width, 260 - offset);
+					int offset = DpiHelper.S(i * 32);
+					graphics.DrawLine(penGrid, base.Width - DpiHelper.S(260) + offset, 0, base.Width, DpiHelper.S(260) - offset);
 				}
 			}
 
@@ -292,33 +369,46 @@ internal partial class LauncherForm : Form
 			SizeF sz2 = graphics.MeasureString(s2, fLogo);
 			SizeF sz3 = graphics.MeasureString(s3, fLogo);
 
+			float logoX = DpiHelper.Sf(202f);
+			float logoY = DpiHelper.Sf(14f);
 			using (SolidBrush b1 = new SolidBrush(colAccent))
 			using (SolidBrush b2 = new SolidBrush(colText))
 			using (SolidBrush b3 = new SolidBrush(colAccentHi))
 			{
-				graphics.DrawString(s1, fLogo, b1, 200f, 16f);
-				graphics.DrawString(s2, fLogo, b2, 200f + sz1.Width, 16f);
-				graphics.DrawString(s3, fLogo, b3, 200f + sz1.Width + sz2.Width, 16f);
+				graphics.DrawString(s1, fLogo, b1, logoX, logoY);
+				graphics.DrawString(s2, fLogo, b2, logoX + sz1.Width, logoY);
+				graphics.DrawString(s3, fLogo, b3, logoX + sz1.Width + sz2.Width, logoY);
 			}
 
-			Rectangle rBadge = new Rectangle((int)(200f + sz1.Width + sz2.Width + sz3.Width + 12f), 22, 114, 22);
-			using (SolidBrush bBadge = new SolidBrush(Color.FromArgb(30, colYellow)))
-			using (SolidBrush bBadgeTxt = new SolidBrush(colYellow))
-			using (Pen pBadge = new Pen(colYellow, 1f))
+			SizeF badgeTextSz = graphics.MeasureString("CYBER EDITION", fBadge);
+			int badgePadX = DpiHelper.S(8);
+			int badgePadY = DpiHelper.S(3);
+			Rectangle rBadge = new Rectangle(
+				(int)(logoX + sz1.Width + sz2.Width + sz3.Width + DpiHelper.Sf(10f)),
+				(int)(logoY + DpiHelper.Sf(5f)),
+				(int)Math.Ceiling(badgeTextSz.Width) + badgePadX * 2,
+				(int)Math.Ceiling(badgeTextSz.Height) + badgePadY * 2);
+			if (rBadge.Right < base.Width - DpiHelper.S(140))
 			{
-				graphics.FillRectangle(bBadge, rBadge);
-				graphics.DrawRectangle(pBadge, rBadge);
-				graphics.DrawString("CYBER EDITION", fBadge, bBadgeTxt, rBadge.X + 8, rBadge.Y + 3);
+				using (SolidBrush bBadge = new SolidBrush(Color.FromArgb(30, colYellow)))
+				using (SolidBrush bBadgeTxt = new SolidBrush(colYellow))
+				using (Pen pBadge = new Pen(colYellow, 1f))
+				{
+					graphics.FillRectangle(bBadge, rBadge);
+					graphics.DrawRectangle(pBadge, rBadge);
+					graphics.DrawString("CYBER EDITION", fBadge, bBadgeTxt, rBadge.X + badgePadX, rBadge.Y + badgePadY);
+				}
 			}
 
 			using (SolidBrush bSub = new SolidBrush(colSub))
 			{
-				graphics.DrawString("HIGH-PERFORMANCE MULTIPLAYER CLIENT  •  SA-MP 0.3.7 R2", fLogoSub, bSub, 202f, 56f);
+				graphics.DrawString("HIGH-PERFORMANCE MULTIPLAYER CLIENT  •  SA-MP 0.3.7 R2", fLogoSub, bSub, DpiHelper.Sf(204f), DpiHelper.Sf(54f));
 			}
 
-			using (Pen pen = new Pen(Color.FromArgb(140, colAccent), 2f))
+			using (Pen pen = new Pen(Color.FromArgb(140, colAccent), DpiHelper.Sf(2f)))
 			{
-				graphics.DrawLine(pen, 200, 86, base.Width - 26, 86);
+				int lineY = DpiHelper.S(86);
+				graphics.DrawLine(pen, DpiHelper.S(200), lineY, base.Width - DpiHelper.S(22), lineY);
 			}
 
 			graphics.Dispose();
@@ -329,25 +419,31 @@ internal partial class LauncherForm : Form
 	private void BuildUi()
 	{
 		base.MouseDown += DragWindow;
-		RoundedBtn roundedBtn = MakeWinBtn("–");
-		roundedBtn.Location = new Point(base.Width - 84, 14);
-		roundedBtn.Click += delegate
+		btnWinMin = MakeWinBtn("–");
+		btnWinMin.Location = new Point(980 - 122, 14);
+		btnWinMin.Click += delegate
 		{
 			base.WindowState = FormWindowState.Minimized;
 		};
-		RoundedBtn roundedBtn2 = MakeWinBtn("×");
-		roundedBtn2.Location = new Point(base.Width - 46, 14);
-		roundedBtn2.TextColor = Color.FromArgb(255, 99, 99);
-		roundedBtn2.Click += delegate
+		btnWinMax = MakeWinBtn("□");
+		btnWinMax.Location = new Point(980 - 84, 14);
+		btnWinMax.Click += delegate
+		{
+			ToggleMaximize();
+		};
+		btnWinClose = MakeWinBtn("×");
+		btnWinClose.Location = new Point(980 - 46, 14);
+		btnWinClose.TextColor = Color.FromArgb(255, 99, 99);
+		btnWinClose.Click += delegate
 		{
 			Close();
 		};
-		Panel panel = new Panel();
-		panel.Location = new Point(0, 87);
-		panel.Size = new Size(190, base.Height - 87 - 36);
-		panel.BackColor = colSide;
-		EnableDoubleBuffer(panel);
-		base.Controls.Add(panel);
+		pnlSide = new Panel();
+		pnlSide.Location = new Point(0, 87);
+		pnlSide.Size = new Size(190, 620 - 87 - 36);
+		pnlSide.BackColor = colSide;
+		EnableDoubleBuffer(pnlSide);
+		base.Controls.Add(pnlSide);
 		btnNavPlay = MakeNav("   ▶  เล่นเกม", 14);
 		btnNavSrv = MakeNav("   ☰  เซิร์ฟเวอร์", 56);
 		btnNavChat = MakeNav("   📜  บันทึกแชท", 98);
@@ -362,27 +458,27 @@ internal partial class LauncherForm : Form
 		btnNavSet.Click += delegate { ShowPage(4); };
 		btnNavRcon.Click += delegate { ShowPage(5); };
 		btnNavMods.Click += delegate { ShowPage(6); };
-		panel.Controls.Add(btnNavPlay);
-		panel.Controls.Add(btnNavSrv);
-		panel.Controls.Add(btnNavChat);
-		panel.Controls.Add(btnNavGal);
-		panel.Controls.Add(btnNavSet);
-		panel.Controls.Add(btnNavRcon);
-		panel.Controls.Add(btnNavMods);
+		pnlSide.Controls.Add(btnNavPlay);
+		pnlSide.Controls.Add(btnNavSrv);
+		pnlSide.Controls.Add(btnNavChat);
+		pnlSide.Controls.Add(btnNavGal);
+		pnlSide.Controls.Add(btnNavSet);
+		pnlSide.Controls.Add(btnNavRcon);
+		pnlSide.Controls.Add(btnNavMods);
 		navIndicator = new Panel();
 		navIndicator.Size = new Size(4, 26);
 		navIndicator.Location = new Point(0, 20);
 		navIndicator.BackColor = colAccent;
-		panel.Controls.Add(navIndicator);
+		pnlSide.Controls.Add(navIndicator);
 		navIndicator.BringToFront();
-		Label label = new Label();
-		label.Text = "SONIC CLIENT v2.3";
-		label.Font = fSmall;
-		label.ForeColor = colSub;
-		label.BackColor = Color.Transparent;
-		label.Location = new Point(18, panel.Height - 34);
-		label.AutoSize = true;
-		panel.Controls.Add(label);
+		lblSideVer = new Label();
+		lblSideVer.Text = "SONIC CLIENT v2.4";
+		lblSideVer.Font = fSmall;
+		lblSideVer.ForeColor = colSub;
+		lblSideVer.BackColor = Color.Transparent;
+		lblSideVer.Location = new Point(18, pnlSide.Height - 32);
+		lblSideVer.AutoSize = true;
+		pnlSide.Controls.Add(lblSideVer);
 		pnlPlay = MakePage();
 		pnlSrv = MakePage();
 		pnlChat = MakePage();
@@ -409,19 +505,23 @@ internal partial class LauncherForm : Form
 		lblStatus.Font = fSub;
 		lblStatus.ForeColor = colSub;
 		lblStatus.BackColor = Color.Transparent;
-		lblStatus.Location = new Point(206, base.Height - 36);
+		lblStatus.Location = new Point(206, 620 - 32);
 		lblStatus.AutoSize = true;
 		base.Controls.Add(lblStatus);
-		Label label2 = new Label();
-		label2.Text = "SA-MP 0.3.7 R2 • CUSTOM LAUNCHER";
-		label2.Font = fLogoSub;
-		label2.ForeColor = colSub;
-		label2.BackColor = Color.Transparent;
-		label2.AutoSize = false;
-		label2.Size = new Size(TextRenderer.MeasureText(label2.Text, label2.Font).Width + 4, 18);
-		label2.Left = base.Width - label2.Width - 28;
-		label2.Top = base.Height - 36;
-		base.Controls.Add(label2);
+		lblFooterRight = new Label();
+		lblFooterRight.Text = "SA-MP 0.3.7 R2 • RUST ENGINE";
+		lblFooterRight.Font = fLogoSub;
+		lblFooterRight.ForeColor = colSub;
+		lblFooterRight.BackColor = Color.Transparent;
+		lblFooterRight.AutoSize = true;
+		lblFooterRight.Location = new Point(980 - 240, 620 - 32);
+		base.Controls.Add(lblFooterRight);
+
+		sparkPollTimer = new System.Windows.Forms.Timer();
+		sparkPollTimer.Interval = 1400;
+		sparkPollTimer.Tick += SparkPollTick;
+		sparkPollTimer.Start();
+
 		ShowPage(0);
 		CyberAudio.Enabled = soundFxEnabled;
 		CyberAudio.Init();
@@ -430,9 +530,115 @@ internal partial class LauncherForm : Form
 		DiscordRpc.UpdateLauncherPresence();
 	}
 
+	private void ToggleMaximize()
+	{
+		if (base.WindowState == FormWindowState.Maximized)
+		{
+			base.WindowState = FormWindowState.Normal;
+		}
+		else
+		{
+			base.WindowState = FormWindowState.Maximized;
+		}
+	}
+
+	private void StartActiveSpark(string host, int port)
+	{
+		if (string.IsNullOrEmpty(host) || port <= 0 || port > 65535)
+		{
+			return;
+		}
+		if (!string.Equals(activeSparkHost, host, StringComparison.OrdinalIgnoreCase) || activeSparkPort != port)
+		{
+			activeSparkHost = host;
+			activeSparkPort = port;
+			if (heroSpark != null) heroSpark.ClearData();
+			if (detSpark != null) detSpark.ClearData();
+			core.StartPingSpark(host, port);
+		}
+	}
+
+	private void SparkPollTick(object sender, EventArgs e)
+	{
+		if (base.IsDisposed || base.WindowState == FormWindowState.Minimized)
+		{
+			return;
+		}
+		bool onPlayOrSrv = (pnlPlay != null && pnlPlay.Visible) || (pnlSrv != null && pnlSrv.Visible);
+		if (!onPlayOrSrv || string.IsNullOrEmpty(activeSparkHost) || activeSparkPort <= 0)
+		{
+			return;
+		}
+		PingSparkReport rep = core.GetPingSpark(activeSparkHost, activeSparkPort);
+		if (pnlPlay != null && pnlPlay.Visible && heroSpark != null)
+		{
+			heroSpark.UpdateData(rep);
+		}
+		if (pnlSrv != null && pnlSrv.Visible && detSpark != null)
+		{
+			detSpark.UpdateData(rep);
+		}
+	}
+
+	private void PerformResponsiveLayout()
+	{
+		int cw = base.ClientSize.Width;
+		int ch = base.ClientSize.Height;
+		if (cw < 200 || ch < 200) return;
+
+		if (btnWinClose != null) btnWinClose.Location = new Point(cw - DpiHelper.S(46), DpiHelper.S(14));
+		if (btnWinMax != null)
+		{
+			btnWinMax.Location = new Point(cw - DpiHelper.S(84), DpiHelper.S(14));
+			btnWinMax.Text = (base.WindowState == FormWindowState.Maximized) ? "❐" : "□";
+		}
+		if (btnWinMin != null) btnWinMin.Location = new Point(cw - DpiHelper.S(122), DpiHelper.S(14));
+
+		if (pnlSide != null)
+		{
+			pnlSide.Location = new Point(0, DpiHelper.S(87));
+			pnlSide.Size = new Size(DpiHelper.S(190), Math.Max(DpiHelper.S(200), ch - DpiHelper.S(87 + 36)));
+			if (lblSideVer != null)
+			{
+				lblSideVer.Location = new Point(DpiHelper.S(18), pnlSide.Height - DpiHelper.S(30));
+			}
+		}
+
+		int pageX = DpiHelper.S(206);
+		int pageY = DpiHelper.S(98);
+		int pageW = Math.Max(DpiHelper.S(660), cw - pageX - DpiHelper.S(18));
+		int pageH = Math.Max(DpiHelper.S(430), ch - pageY - DpiHelper.S(44));
+
+		Panel[] pages = new Panel[] { pnlPlay, pnlSrv, pnlChat, pnlGal, pnlSet, pnlRcon, pnlMods };
+		foreach (Panel p in pages)
+		{
+			if (p != null)
+			{
+				p.Top = pageY;
+				p.Left = pageX;
+				p.Size = new Size(pageW, pageH);
+			}
+		}
+
+		if (lblStatus != null)
+		{
+			lblStatus.Location = new Point(pageX, ch - DpiHelper.S(30));
+		}
+		if (lblFooterRight != null)
+		{
+			lblFooterRight.Location = new Point(cw - lblFooterRight.Width - DpiHelper.S(24), ch - DpiHelper.S(30));
+		}
+
+		LayoutPlayPage(pageW, pageH);
+		LayoutServersPage(pageW, pageH);
+		LayoutToolsPages(pageW, pageH);
+		LayoutModsPage(pageW, pageH);
+	}
+
 	protected override void OnFormClosing(FormClosingEventArgs e)
 	{
 		DiscordRpc.Shutdown();
+		core.StopPingSpark();
 		base.OnFormClosing(e);
 	}
 
@@ -444,6 +650,12 @@ internal partial class LauncherForm : Form
 		{
 			scanPollTimer.Dispose();
 			scanPollTimer = null;
+		}
+		if (sparkPollTimer != null)
+		{
+			sparkPollTimer.Stop();
+			sparkPollTimer.Dispose();
+			sparkPollTimer = null;
 		}
 		StopPubAuto();
 		StopPlaytime();
@@ -467,7 +679,7 @@ internal partial class LauncherForm : Form
 	{
 		Panel panel = new TransPanel();
 		panel.Location = new Point(206, 98);
-		panel.Size = new Size(668, 436);
+		panel.Size = new Size(756, 480);
 		panel.MouseDown += DragWindow;
 		base.Controls.Add(panel);
 		return panel;
@@ -543,13 +755,15 @@ internal partial class LauncherForm : Form
 			break;
 		}
 		Panel target = panel;
+		int baseX = DpiHelper.S(206);
+		int baseY = DpiHelper.S(98);
 		Panel[] array = new Panel[7] { pnlPlay, pnlSrv, pnlChat, pnlGal, pnlSet, pnlRcon, pnlMods };
 		foreach (Panel panel2 in array)
 		{
 			if (panel2 != target)
 			{
 				panel2.Visible = false;
-				panel2.Location = new Point(206, 98);
+				panel2.Location = new Point(baseX, baseY);
 			}
 		}
 		target.Visible = true;
@@ -569,21 +783,33 @@ internal partial class LauncherForm : Form
 			((idx == 5) ? btnNavRcon : btnNavMods)))));
 		if (activeBtn != null && navIndicator != null)
 		{
-			navIndicator.Top = activeBtn.Top + 6;
+			navIndicator.Top = activeBtn.Top + DpiHelper.S(6);
 		}
 
-		Point orig = target.Location;
-		target.Location = new Point(orig.X + 26, orig.Y);
+		int slidePx = DpiHelper.S(24);
+		target.Location = new Point(baseX + slidePx, baseY);
 		Animate(190, delegate(float t)
 		{
 			if (!target.IsDisposed)
 			{
-				target.Location = new Point(orig.X + (int)(26f * (1f - t)), orig.Y);
+				target.Location = new Point(baseX + (int)((float)slidePx * (1f - t)), baseY);
 			}
 		});
-		if (idx == 1 && viewMode == "mine")
+		if (idx == 0)
 		{
-			RefreshAllServers();
+			ResumePlaySpark();
+		}
+		else if (idx == 1)
+		{
+			ResumeSelectedServerSpark();
+			if (viewMode == "mine")
+			{
+				RefreshAllServers();
+			}
+		}
+		else
+		{
+			core.StopPingSpark();
 		}
 		if (idx != 1)
 		{
@@ -659,12 +885,12 @@ internal partial class LauncherForm : Form
 
 	private void Toast(string msg)
 	{
-		new MiniToast(msg, colAccent).Show(this);
+		new MiniToast(this, msg, colAccent, 2800).Show();
 	}
 
 	private void ToastOk(string msg)
 	{
-		new MiniToast(msg, colOk).Show(this);
+		new MiniToast(this, msg, colOk, 3000).Show();
 	}
 
 	private RoundedBtn MakeWinBtn(string glyph)
@@ -815,6 +1041,9 @@ internal partial class LauncherForm : Form
 		StyleNav(btnNavGal, pnlGal.Visible);
 		StyleNav(btnNavSet, pnlSet.Visible);
 		StyleNav(btnNavRcon, pnlRcon.Visible);
+		StyleNav(btnNavMods, pnlMods.Visible);
+		if (heroSpark != null) { heroSpark.AccentColor = c; heroSpark.Invalidate(); }
+		if (detSpark != null) { detSpark.AccentColor = c; detSpark.Invalidate(); }
 		Invalidate();
 	}
 
@@ -864,7 +1093,8 @@ internal partial class LauncherForm : Form
 
 	private void ShowErr(string msg)
 	{
-		MessageBox.Show(this, msg, "SA-MP Launcher", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+		CyberAudio.PlayAlert();
+		new MiniToast(this, "✖  " + msg, Color.FromArgb(255, 85, 105), 4200).Show();
 		SetStatus("โปรดตรวจข้อมูล");
 	}
 
@@ -879,7 +1109,64 @@ internal partial class LauncherForm : Form
 
 	protected override void WndProc(ref Message m)
 	{
-		if (m.Msg == 0x004A)
+		const int WM_NCCALCSIZE = 0x0083;
+		const int WM_NCHITTEST = 0x0084;
+		const int WM_COPYDATA = 0x004A;
+
+		if (m.Msg == WM_NCCALCSIZE && m.WParam != IntPtr.Zero)
+		{
+			if (IsZoomed(base.Handle))
+			{
+				RECT rc = (RECT)Marshal.PtrToStructure(m.LParam, typeof(RECT));
+				int cx = GetSystemMetrics(32) + GetSystemMetrics(92); // SM_CXSIZEFRAME + SM_CXPADDEDBORDER
+				int cy = GetSystemMetrics(33) + GetSystemMetrics(92); // SM_CYSIZEFRAME + SM_CXPADDEDBORDER
+				rc.Left += cx;
+				rc.Top += cy;
+				rc.Right -= cx;
+				rc.Bottom -= cy;
+				Marshal.StructureToPtr(rc, m.LParam, false);
+			}
+			m.Result = IntPtr.Zero;
+			return;
+		}
+
+		if (m.Msg == WM_NCHITTEST)
+		{
+			base.WndProc(ref m);
+			if (m.Result == (IntPtr)1) // HTCLIENT
+			{
+				int lp = m.LParam.ToInt32();
+				Point screenPt = new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF));
+				Point pt = PointToClient(screenPt);
+
+				if (base.WindowState == FormWindowState.Normal)
+				{
+					int grip = DpiHelper.S(7);
+					bool left = pt.X <= grip;
+					bool right = pt.X >= base.ClientSize.Width - grip;
+					bool top = pt.Y <= grip;
+					bool bottom = pt.Y >= base.ClientSize.Height - grip;
+
+					if (top && left) { m.Result = (IntPtr)13; return; }      // HTTOPLEFT
+					if (top && right) { m.Result = (IntPtr)14; return; }     // HTTOPRIGHT
+					if (bottom && left) { m.Result = (IntPtr)16; return; }   // HTBOTTOMLEFT
+					if (bottom && right) { m.Result = (IntPtr)17; return; }  // HTBOTTOMRIGHT
+					if (left) { m.Result = (IntPtr)10; return; }             // HTLEFT
+					if (right) { m.Result = (IntPtr)11; return; }            // HTRIGHT
+					if (top) { m.Result = (IntPtr)12; return; }              // HTTOP
+					if (bottom) { m.Result = (IntPtr)15; return; }           // HTBOTTOM
+				}
+
+				if (pt.Y < DpiHelper.S(86) && pt.X < base.ClientSize.Width - DpiHelper.S(136))
+				{
+					m.Result = (IntPtr)2; // HTCAPTION (Aero Snap + Double-Click Maximize)
+					return;
+				}
+			}
+			return;
+		}
+
+		if (m.Msg == WM_COPYDATA)
 		{
 			try
 			{
