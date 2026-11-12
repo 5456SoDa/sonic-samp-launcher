@@ -19,6 +19,8 @@ internal partial class LauncherForm
 	private string pubCachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "public_servers_cache.json");
 	private Dictionary<string, ServerEntry> activeScanLookup = new Dictionary<string, ServerEntry>();
 	private Dictionary<ServerEntry, ListViewItem> rowByEntry = new Dictionary<ServerEntry, ListViewItem>();
+	private DateTime ptLastFlushUtc;
+	private bool ptCloseOnExit;
 
 	private void BuildSrvPage()
 	{
@@ -887,6 +889,10 @@ internal partial class LauncherForm
 		{
 			fetchingPub = false;
 		}
+		if (querying)
+		{
+			FinishRefresh();
+		}
 	}
 
 	private void PollActiveScan()
@@ -1472,17 +1478,19 @@ internal partial class LauncherForm
 		}
 	}
 
-	private void StartPlaytime(string key)
+	private void StartPlaytime(string key, bool closeOnExit)
 	{
 		StopPlaytime();
 		lock (ptLock)
 		{
 			ptServer = key;
+			ptCloseOnExit = closeOnExit;
+			ptLastFlushUtc = DateTime.UtcNow;
 			if (!playtime.ContainsKey(key))
 			{
 				playtime[key] = 0L;
 			}
-			ptTimer = new System.Threading.Timer(PlaytimeTick, null, 30000, 30000);
+			ptTimer = new System.Threading.Timer(PlaytimeTick, null, 5000, 5000);
 		}
 	}
 
@@ -1496,6 +1504,7 @@ internal partial class LauncherForm
 			ptTimer = null;
 			hadServer = (ptServer != null);
 			ptServer = null;
+			ptCloseOnExit = false;
 		}
 		if (timer != null)
 		{
@@ -1517,20 +1526,72 @@ internal partial class LauncherForm
 				return;
 			}
 			string text;
+			DateTime lastFlush;
+			bool closeAfter;
 			lock (ptLock)
 			{
 				text = ptServer;
+				lastFlush = ptLastFlushUtc;
+				closeAfter = ptCloseOnExit;
 			}
 			if (text == null)
 			{
 				return;
 			}
+			DateTime now = DateTime.UtcNow;
+			long elapsed = (long)(now - lastFlush).TotalSeconds;
 			if (Process.GetProcessesByName("gta_sa").Length == 0)
 			{
+				if (elapsed >= 1 && elapsed < 3600)
+				{
+					long totalFinal = core.AddPlaytime(text, elapsed);
+					lock (ptLock)
+					{
+						if (totalFinal > 0)
+						{
+							playtime[text] = totalFinal;
+						}
+						else
+						{
+							playtime[text] = (playtime.ContainsKey(text) ? (playtime[text] + elapsed) : elapsed);
+						}
+					}
+				}
 				StopPlaytime();
+				if (!base.IsDisposed)
+				{
+					try
+					{
+						BeginInvoke((MethodInvoker)delegate
+						{
+							if (closeAfter)
+							{
+								Close();
+							}
+							else
+							{
+								SetStatus("พร้อมเชื่อมต่อ");
+							}
+						});
+					}
+					catch
+					{
+					}
+				}
 				return;
 			}
-			long total = core.AddPlaytime(text, 30L);
+			if (elapsed < 30)
+			{
+				return;
+			}
+			lock (ptLock)
+			{
+				if (ptServer == text)
+				{
+					ptLastFlushUtc = now;
+				}
+			}
+			long total = core.AddPlaytime(text, elapsed);
 			lock (ptLock)
 			{
 				if (ptServer == text)
@@ -1541,7 +1602,7 @@ internal partial class LauncherForm
 					}
 					else
 					{
-						playtime[text] = (playtime.ContainsKey(text) ? (playtime[text] + 30) : 30);
+						playtime[text] = (playtime.ContainsKey(text) ? (playtime[text] + elapsed) : elapsed);
 					}
 				}
 			}
@@ -1591,7 +1652,7 @@ internal partial class LauncherForm
 
 	private void ToggleWatch()
 	{
-		if (watchTimer != null)
+		if (watchTimer != null || watchEntry != null)
 		{
 			StopWatch("หยุดเฝ้าดูที่ว่างแล้ว");
 			return;
@@ -1612,35 +1673,41 @@ internal partial class LauncherForm
 		ThreadPool.QueueUserWorkItem(delegate
 		{
 			QueryResult qr = core.QueryServer(e.Ip, port);
-			if (!base.IsDisposed)
+			try
 			{
-				BeginInvoke((MethodInvoker)delegate
+				if (!base.IsDisposed)
 				{
-					if (watchEntry == e)
+					BeginInvoke((MethodInvoker)delegate
 					{
-						if (qr.Online && qr.Players < qr.Max)
+						if (watchEntry == e)
 						{
-							watchEntry = null;
-							ShowSlotToast(e, qr.Players, qr.Max);
-						}
-						else
-						{
-							watchTimer = new System.Threading.Timer(WatchTick, e, 8000, 25000);
-							if (miWatch != null)
+							if (qr.Online && qr.Players < qr.Max)
 							{
-								miWatch.Text = "■   หยุดเฝ้าดู (" + e.Ip + ":" + e.Port + ")";
+								watchEntry = null;
+								ShowSlotToast(e, qr.Players, qr.Max);
 							}
-							if (btnWatch != null)
+							else
 							{
-								btnWatch.Text = "■  หยุดเฝ้าดู";
-								btnWatch.SetPalette(Color.FromArgb(180, 40, 50), Color.FromArgb(220, 50, 60));
-								btnWatch.BorderColor = Color.FromArgb(255, 99, 99);
+								watchTimer = new System.Threading.Timer(WatchTick, e, 8000, 25000);
+								if (miWatch != null)
+								{
+									miWatch.Text = "■   หยุดเฝ้าดู (" + e.Ip + ":" + e.Port + ")";
+								}
+								if (btnWatch != null)
+								{
+									btnWatch.Text = "■  หยุดเฝ้าดู";
+									btnWatch.SetPalette(Color.FromArgb(180, 40, 50), Color.FromArgb(220, 50, 60));
+									btnWatch.BorderColor = Color.FromArgb(255, 99, 99);
+								}
+								string text = (qr.Online ? (qr.Players + "/" + qr.Max) : "ออฟไลน์");
+								SetStatus("🔔 กำลังเฝ้าดู " + e.Ip + ":" + e.Port + " (" + text + ") — เช็กทุก 25 วินาที มีที่ว่างจะแจ้งทันที");
 							}
-							string text = (qr.Online ? (qr.Players + "/" + qr.Max) : "ออฟไลน์");
-							SetStatus("🔔 กำลังเฝ้าดู " + e.Ip + ":" + e.Port + " (" + text + ") — เช็กทุก 25 วินาที มีที่ว่างจะแจ้งทันที");
 						}
-					}
-				});
+					});
+				}
+			}
+			catch
+			{
 			}
 		});
 	}
@@ -1668,28 +1735,34 @@ internal partial class LauncherForm
 		{
 			return;
 		}
-		BeginInvoke((MethodInvoker)delegate
+		try
 		{
-			if (miWatch != null)
+			BeginInvoke((MethodInvoker)delegate
 			{
-				miWatch.Text = "🔔   เฝ้าดูที่ว่าง";
-			}
-			if (btnWatch != null)
-			{
-				btnWatch.Text = "🔔  เฝ้าดูที่ว่าง";
-				btnWatch.SetPalette(colField, colFieldHover);
-				btnWatch.BorderColor = Color.FromArgb(40, 60, 95);
-			}
-			ShowSlotToast(e, qr.Players, qr.Max);
-			CyberAudio.PlayAlert();
-			if (autoJoinSlot)
-			{
-				ForceText(txtIp, e.Ip);
-				ForceText(txtPort, e.Port);
-				ShowPage(0);
-				ConnectToServer();
-			}
-		});
+				if (miWatch != null)
+				{
+					miWatch.Text = "🔔   เฝ้าดูที่ว่าง";
+				}
+				if (btnWatch != null)
+				{
+					btnWatch.Text = "🔔  เฝ้าดูที่ว่าง";
+					btnWatch.SetPalette(colField, colFieldHover);
+					btnWatch.BorderColor = Color.FromArgb(40, 60, 95);
+				}
+				ShowSlotToast(e, qr.Players, qr.Max);
+				CyberAudio.PlayAlert();
+				if (autoJoinSlot)
+				{
+					ForceText(txtIp, e.Ip);
+					ForceText(txtPort, e.Port);
+					ShowPage(0);
+					ConnectToServer();
+				}
+			});
+		}
+		catch
+		{
+		}
 	}
 
 	private void StopWatch(string msg)

@@ -377,3 +377,8 @@ pub extern "C" fn core_snapshot_delete(
         }
     })
 }
+
+#[no_mangle]
+pub extern "C" fn core_db_close() {
+    let _ = std::panic::catch_unwind(db::close_db);
+}

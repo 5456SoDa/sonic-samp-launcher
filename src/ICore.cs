@@ -49,6 +49,8 @@ internal class SnapshotInfo
 	public int FileCount;
 	public long TotalRawBytes;
 	public long TotalCompressedBytes;
+	public int SkippedLargeCount;
+	public List<string> SkippedLargeFiles = new List<string>();
 }
 
 internal interface ICore
@@ -98,6 +100,8 @@ internal interface ICore
 	string RestoreSnapshot(string gameDir, string snapshotId);
 
 	void DeleteSnapshot(string gameDir, string snapshotId);
+
+	void CloseDb();
 }
 
 internal static class CoreFactory

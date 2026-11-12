@@ -56,8 +56,12 @@ internal class StatsDialog : Form
 			};
 			base.Controls.Add(value2);
 		}
-		int num = vals[0];
-		int num2 = vals[0];
+		if (vals == null)
+		{
+			vals = new List<int>();
+		}
+		int num = (vals.Count > 0) ? vals[0] : 0;
+		int num2 = (vals.Count > 0) ? vals[0] : 0;
 		long num3 = 0L;
 		foreach (int val in vals)
 		{
@@ -71,10 +75,11 @@ internal class StatsDialog : Form
 			}
 			num3 += val;
 		}
-		int num4 = (int)(num3 / vals.Count);
+		int num4 = (vals.Count > 0) ? (int)(num3 / vals.Count) : 0;
+		int lastVal = (vals.Count > 0) ? vals[vals.Count - 1] : 0;
 		Label value3 = new Label
 		{
-			Text = "ล่าสุด " + vals[vals.Count - 1] + "  •  สูงสุด " + num + "  •  ต่ำสุด " + num2 + "  •  เฉลี่ย " + num4 + "  •  (" + vals.Count + " ตัวอย่าง)",
+			Text = "ล่าสุด " + lastVal + "  •  สูงสุด " + num + "  •  ต่ำสุด " + num2 + "  •  เฉลี่ย " + num4 + "  •  (" + vals.Count + " ตัวอย่าง)",
 			Font = new Font("Segoe UI", 9f),
 			ForeColor = Color.FromArgb(140, 140, 165),
 			BackColor = Color.Transparent,
@@ -131,13 +136,29 @@ internal class StatsDialog : Form
 				}
 			}
 			List<Point> list = new List<Point>();
-			for (int k = 0; k < num7; k++)
+			if (num7 == 1)
 			{
-				int num11 = rectangle2.X + rectangle2.Width * k / (num7 - 1);
-				int num12 = rectangle2.Bottom - rectangle2.Height * vals[num8 + k] / num9;
-				list.Add(new Point(num11, num12));
+				int ySingle = rectangle2.Bottom - rectangle2.Height * vals[num8] / num9;
+				list.Add(new Point(rectangle2.X + rectangle2.Width / 2, ySingle));
 			}
-			if (list.Count >= 2)
+			else if (num7 > 1)
+			{
+				for (int k = 0; k < num7; k++)
+				{
+					int num11 = rectangle2.X + rectangle2.Width * k / (num7 - 1);
+					int num12 = rectangle2.Bottom - rectangle2.Height * vals[num8 + k] / num9;
+					list.Add(new Point(num11, num12));
+				}
+			}
+			if (list.Count == 1)
+			{
+				Point ptOnly = list[0];
+				using (SolidBrush brushSingle = new SolidBrush(Color.FromArgb(90, 210, 130)))
+				{
+					graphics.FillEllipse(brushSingle, ptOnly.X - 5, ptOnly.Y - 5, 11, 11);
+				}
+			}
+			else if (list.Count >= 2)
 			{
 				GraphicsPath graphicsPath2 = new GraphicsPath();
 				graphicsPath2.AddCurve(list.ToArray(), 0.4f);

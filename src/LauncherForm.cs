@@ -440,6 +440,7 @@ internal partial class LauncherForm : Form
 		StopPubAuto();
 		StopPlaytime();
 		StopWatch("ปิดแล้ว");
+		core.CloseDb();
 		foreach (System.Windows.Forms.Timer activeTimer in activeTimers)
 		{
 			try
@@ -763,6 +764,22 @@ internal partial class LauncherForm : Form
 		if (swClose != null)
 		{
 			swClose.OnColor = c;
+		}
+		if (swAutoSlot != null)
+		{
+			swAutoSlot.OnColor = c;
+		}
+		if (swSoundFx != null)
+		{
+			swSoundFx.OnColor = c;
+		}
+		if (swDiscordRpc != null)
+		{
+			swDiscordRpc.OnColor = c;
+		}
+		if (swNoPauseAltTab != null)
+		{
+			swNoPauseAltTab.OnColor = c;
 		}
 		if (ring != null)
 		{

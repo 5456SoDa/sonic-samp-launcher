@@ -262,6 +262,15 @@ pub fn get_stats(ip: &str, port: &str, limit: usize) -> Result<Vec<i32>, String>
     with_conn(|c| get_stats_on(c, ip, port, limit))
 }
 
+pub fn close_db() {
+    if let Ok(mut g) = global_db().lock() {
+        if let Some(conn) = g.take() {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            drop(conn);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

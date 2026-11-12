@@ -8,8 +8,82 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
+internal sealed class ChatTailResult
+{
+	public List<string> Lines = new List<string>();
+	public bool Truncated;
+}
+
+internal static class ChatLogReader
+{
+	public static ChatTailResult ReadTail(string path, int maxBytes, int maxLines)
+	{
+		ChatTailResult res = new ChatTailResult();
+		using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+		{
+			long len = fs.Length;
+			bool seeked = len > maxBytes;
+			int toRead = (int)(seeked ? maxBytes : len);
+			if (seeked)
+			{
+				fs.Seek(len - toRead, SeekOrigin.Begin);
+			}
+			byte[] raw = new byte[toRead];
+			int readTotal = 0;
+			while (readTotal < toRead)
+			{
+				int r = fs.Read(raw, readTotal, toRead - readTotal);
+				if (r <= 0) break;
+				readTotal += r;
+			}
+			int start = 0;
+			if (!seeked && readTotal >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF)
+			{
+				start = 3;
+			}
+			else if (seeked)
+			{
+				// Advance past partial first line/codepoint so UTF-8 boundary stays valid
+				int nl = Array.IndexOf(raw, (byte)'\n', 0, readTotal);
+				if (nl >= 0 && nl + 1 < readTotal)
+				{
+					start = nl + 1;
+				}
+				res.Truncated = true;
+			}
+			int count = Math.Max(0, readTotal - start);
+			string content;
+			try
+			{
+				content = new UTF8Encoding(false, true).GetString(raw, start, count);
+			}
+			catch
+			{
+				content = Encoding.GetEncoding(874).GetString(raw, start, count);
+			}
+			List<string> parsed = new List<string>();
+			using (StringReader sr = new StringReader(content))
+			{
+				string line;
+				while ((line = sr.ReadLine()) != null)
+				{
+					parsed.Add(line);
+				}
+			}
+			if (parsed.Count > maxLines)
+			{
+				res.Truncated = true;
+				parsed.RemoveRange(0, parsed.Count - maxLines);
+			}
+			res.Lines = parsed;
+		}
+		return res;
+	}
+}
+
 internal partial class LauncherForm
 {
+	private int chatLoadGen;
 	private void BuildGalPage()
 	{
 		AddLbl(pnlGal, "แกลเลอรีสกรีนช็อต (F8 ในเกม)", fTitle, 0, 0, colText);
@@ -128,6 +202,8 @@ internal partial class LauncherForm
 
 	private void LoadChatLines()
 	{
+		chatLoadGen++;
+		int gen = chatLoadGen;
 		chatLines.Clear();
 		string chatlogPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "GTA San Andreas User Files", "SAMP", "chatlog.txt");
 		if (!File.Exists(chatlogPath))
@@ -142,59 +218,56 @@ internal partial class LauncherForm
 			}
 			return;
 		}
-
-		try
+		if (lblChatInfo != null)
 		{
-			using (FileStream fs = new FileStream(chatlogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+			lblChatInfo.Text = "กำลังโหลดบันทึกแชทล่าสุด...";
+		}
+		ThreadPool.QueueUserWorkItem(delegate
+		{
+			try
 			{
-				byte[] fileBytes = new byte[fs.Length];
-				fs.Read(fileBytes, 0, fileBytes.Length);
-
-				string content;
-				if (fileBytes.Length >= 3 && fileBytes[0] == 0xEF && fileBytes[1] == 0xBB && fileBytes[2] == 0xBF)
+				ChatTailResult res = ChatLogReader.ReadTail(chatlogPath, 2 * 1024 * 1024, 5000);
+				if (!base.IsDisposed)
 				{
-					content = Encoding.UTF8.GetString(fileBytes, 3, fileBytes.Length - 3);
-				}
-				else
-				{
-					bool isUtf8 = true;
-					try
+					BeginInvoke((MethodInvoker)delegate
 					{
-						UTF8Encoding strictUtf8 = new UTF8Encoding(false, true);
-						content = strictUtf8.GetString(fileBytes);
-					}
-					catch
-					{
-						isUtf8 = false;
-						content = "";
-					}
-					if (!isUtf8)
-					{
-						content = Encoding.GetEncoding(874).GetString(fileBytes);
-					}
-				}
-
-				using (StringReader sr = new StringReader(content))
-				{
-					string line;
-					while ((line = sr.ReadLine()) != null)
-					{
-						chatLines.Add(line);
-					}
+						if (gen != chatLoadGen || base.IsDisposed)
+						{
+							return;
+						}
+						chatLines = res.Lines;
+						FilterChatLines(res.Truncated);
+					});
 				}
 			}
-			FilterChatLines();
-		}
-		catch (Exception ex)
-		{
-			if (lblChatInfo != null)
+			catch (Exception ex)
 			{
-				lblChatInfo.Text = "เกิดข้อผิดพลาดในการอ่านไฟล์: " + ex.Message;
+				try
+				{
+					if (!base.IsDisposed)
+					{
+						BeginInvoke((MethodInvoker)delegate
+						{
+							if (gen == chatLoadGen && lblChatInfo != null)
+							{
+								lblChatInfo.Text = "เกิดข้อผิดพลาดในการอ่านไฟล์: " + ex.Message;
+							}
+						});
+					}
+				}
+				catch
+				{
+				}
 			}
-		}
+		});
 	}
 
 	private void FilterChatLines()
+	{
+		FilterChatLines(false);
+	}
+
+	private void FilterChatLines(bool truncated)
 	{
 		if (txtChatLog == null || lblChatInfo == null)
 		{
@@ -215,13 +288,14 @@ internal partial class LauncherForm
 		}
 
 		txtChatLog.Text = sb.ToString();
+		string note = truncated ? " (แสดงสูงสุด 5,000 บรรทัดล่าสุด)" : "";
 		if (!string.IsNullOrEmpty(query))
 		{
-			lblChatInfo.Text = string.Format("ผลการค้นหา: พบ {0} จากทั้งหมด {1} บรรทัด", matchCount, chatLines.Count);
+			lblChatInfo.Text = string.Format("ผลการค้นหา: พบ {0} จาก {1} บรรทัด{2}", matchCount, chatLines.Count, note);
 		}
 		else
 		{
-			lblChatInfo.Text = string.Format("แสดงประวัติแชททั้งหมด {0} บรรทัด (เลื่อนลงเพื่อดูข้อความล่าสุด)", chatLines.Count);
+			lblChatInfo.Text = string.Format("แสดงประวัติแชท {0} บรรทัด{1}", chatLines.Count, note);
 		}
 
 		txtChatLog.SelectionStart = txtChatLog.Text.Length;
@@ -301,51 +375,78 @@ internal partial class LauncherForm
 				currentGalleryPaths.Add(item2.FullName);
 			}
 			num = list2.Count;
-			foreach (FileInfo item2 in list2)
+			List<string> pathsSnapshot = new List<string>(currentGalleryPaths);
+			ThreadPool.QueueUserWorkItem(delegate
 			{
-				string path2 = item2.FullName;
-				ThreadPool.QueueUserWorkItem(delegate
+				List<KeyValuePair<string, Image>> batch = new List<KeyValuePair<string, Image>>(8);
+				for (int i = 0; i < pathsSnapshot.Count; i++)
 				{
-					Image thumb = MakeThumb(path2);
-					if (thumb == null || base.IsDisposed)
+					if (base.IsDisposed || gen != galGen)
 					{
-						if (thumb != null)
-						{
-							thumb.Dispose();
-						}
-						return;
+						break;
 					}
-					try
+					string path2 = pathsSnapshot[i];
+					Image thumb = MakeThumb(path2);
+					if (thumb != null)
 					{
-						BeginInvoke((MethodInvoker)delegate
+						batch.Add(new KeyValuePair<string, Image>(path2, thumb));
+					}
+					if (batch.Count >= 8 || (i == pathsSnapshot.Count - 1 && batch.Count > 0))
+					{
+						List<KeyValuePair<string, Image>> dispatch = batch;
+						batch = new List<KeyValuePair<string, Image>>(8);
+						try
 						{
-							if (galFlow.IsDisposed || gen != galGen)
+							if (!base.IsDisposed)
 							{
-								thumb.Dispose();
+								BeginInvoke((MethodInvoker)delegate
+								{
+									if (galFlow.IsDisposed || gen != galGen)
+									{
+										foreach (KeyValuePair<string, Image> kv in dispatch)
+										{
+											kv.Value.Dispose();
+										}
+										return;
+									}
+									galFlow.SuspendLayout();
+									try
+									{
+										foreach (KeyValuePair<string, Image> kv in dispatch)
+										{
+											string shotPath = kv.Key;
+											PictureBox pictureBox2 = new PictureBox();
+											pictureBox2.Image = kv.Value;
+											pictureBox2.Size = kv.Value.Size;
+											pictureBox2.SizeMode = PictureBoxSizeMode.StretchImage;
+											pictureBox2.BackColor = colField;
+											pictureBox2.Padding = new Padding(2);
+											pictureBox2.Cursor = Cursors.Hand;
+											pictureBox2.Click += delegate
+											{
+												OpenShotViewer(shotPath);
+											};
+											galFlow.Controls.Add(pictureBox2);
+										}
+									}
+									finally
+									{
+										galFlow.ResumeLayout();
+									}
+								});
 							}
 							else
 							{
-								PictureBox pictureBox2 = new PictureBox();
-								pictureBox2.Image = thumb;
-								pictureBox2.Size = thumb.Size;
-								pictureBox2.SizeMode = PictureBoxSizeMode.StretchImage;
-								pictureBox2.BackColor = colField;
-								pictureBox2.Padding = new Padding(2);
-								pictureBox2.Cursor = Cursors.Hand;
-								pictureBox2.Click += delegate
-								{
-									OpenShotViewer(path2);
-								};
-								galFlow.Controls.Add(pictureBox2);
+								foreach (KeyValuePair<string, Image> kv in dispatch) kv.Value.Dispose();
 							}
-						});
+						}
+						catch
+						{
+							foreach (KeyValuePair<string, Image> kv in dispatch) kv.Value.Dispose();
+						}
 					}
-					catch
-					{
-						thumb.Dispose();
-					}
-				});
-			}
+				}
+			});
 		}
 		if (num == 0)
 		{
@@ -477,7 +578,7 @@ internal partial class LauncherForm
 		string s = FieldVal(txtRconPort);
 		string pass = FieldVal(txtRconPass);
 		int port;
-		if (ip.Length == 0 || !ValidHost(ip) || !int.TryParse(s, out port))
+		if (ip.Length == 0 || !ValidHost(ip) || !int.TryParse(s, out port) || port < 1 || port > 65535)
 		{
 			ShowErr("IP / Port ไม่ถูกต้อง");
 			return;
@@ -492,16 +593,22 @@ internal partial class LauncherForm
 			{
 				res = "(ไม่มีข้อความตอบกลับ)";
 			}
-			if (!base.IsDisposed)
+			try
 			{
-				BeginInvoke((MethodInvoker)delegate
+				if (!base.IsDisposed)
 				{
-					AppendRcon(res);
-					if (isTest)
+					BeginInvoke((MethodInvoker)delegate
 					{
-						SetStatus((res.Trim() == "rcon_ok") ? "RCON เชื่อมต่อสำเร็จ ✓" : ("RCON: " + res.Split('\n')[0]));
-					}
-				});
+						AppendRcon(res);
+						if (isTest)
+						{
+							SetStatus((res.Trim() == "rcon_ok") ? "RCON เชื่อมต่อสำเร็จ ✓" : ("RCON: " + res.Split('\n')[0]));
+						}
+					});
+				}
+			}
+			catch
+			{
 			}
 		});
 	}

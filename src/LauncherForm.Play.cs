@@ -144,15 +144,34 @@ internal partial class LauncherForm
 		txtIp.TextChanged += delegate
 		{
 			string val = txtIp.Text.Trim();
-			if (val.Contains(":"))
+			string normalized = val;
+			if (normalized.StartsWith("samp://", StringComparison.OrdinalIgnoreCase))
 			{
-				string[] parts = val.Split(':');
-				if (parts.Length >= 2 && parts[0].Length > 0 && parts[1].Length > 0)
+				normalized = normalized.Substring(7);
+			}
+			int slash = normalized.IndexOf('/');
+			if (slash >= 0)
+			{
+				normalized = normalized.Substring(0, slash);
+			}
+			int colon = normalized.LastIndexOf(':');
+			if (colon > 0)
+			{
+				string hostPart = normalized.Substring(0, colon).Trim();
+				string portPart = normalized.Substring(colon + 1).Trim();
+				int parsedPort;
+				if (hostPart.Length > 0 && int.TryParse(portPart, out parsedPort) && parsedPort >= 1 && parsedPort <= 65535)
 				{
-					ForceText(txtIp, parts[0]);
-					ForceText(txtPort, parts[1].TrimEnd('/'));
+					ForceText(txtIp, hostPart);
+					ForceText(txtPort, parsedPort.ToString());
 					QueryPlayServer();
+					return;
 				}
+			}
+			if (normalized != val && normalized.Length > 0)
+			{
+				ForceText(txtIp, normalized);
+				QueryPlayServer();
 			}
 		};
 
@@ -446,23 +465,6 @@ internal partial class LauncherForm
 			ShowErr("Port ไม่ถูกต้อง (ต้องอยู่ระหว่าง 1-65535)");
 			return;
 		}
-		string text5 = core.ResolveHost(text2);
-		if (text5 == null)
-		{
-			ShowErr("ไม่สามารถค้นหา IP จาก Hostname ได้: " + text2);
-			return;
-		}
-		if (result != 7777 || !text5.StartsWith("127."))
-		{
-			QueryResult check = core.QueryServer(text5, result);
-			if (!check.Online)
-			{
-				if (MessageBox.Show(this, "เซิร์ฟเวอร์ " + text5 + ":" + result + " ไม่ตอบสนองต่อการตรวจสถานะ (เซิร์ฟเวอร์อาจปิด หรือ Firewall บล็อก Port " + result + " / UDP Query)\r\n\r\nคุณยังต้องการเข้าสู่เกมต่อไปหรือไม่?", "แจ้งเตือนการเชื่อมต่อ", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-				{
-					return;
-				}
-			}
-		}
 		string gameDir = GetGameDir();
 		string text6 = Path.Combine(gameDir, "gta_sa.exe");
 		string text7 = Path.Combine(gameDir, "samp.dll");
@@ -481,39 +483,89 @@ internal partial class LauncherForm
 			ShowErr("gta_sa.exe กำลังรันอยู่ ปิดเกมเดิมก่อนเข้าสู่เกมใหม่");
 			return;
 		}
+
+		connecting = true;
+		btnConnect.Enabled = false;
+		SetStatus("กำลังตรวจสอบสถานะเซิร์ฟเวอร์ " + text2 + ":" + result + "...");
+		ThreadPool.QueueUserWorkItem(delegate
+		{
+			string resolvedIp = core.ResolveHost(text2);
+			QueryResult check = null;
+			if (resolvedIp != null && (result != 7777 || !resolvedIp.StartsWith("127.")))
+			{
+				check = core.QueryServer(resolvedIp, result);
+			}
+			try
+			{
+				if (!base.IsDisposed)
+				{
+					BeginInvoke((MethodInvoker)delegate
+					{
+						FinishConnectAfterCheck(text, text2, text3, result, resolvedIp, check, gameDir, text6, text7);
+					});
+				}
+			}
+			catch
+			{
+			}
+		});
+	}
+
+	private void FinishConnectAfterCheck(string nick, string host, string portStr, int port, string resolvedIp, QueryResult check, string gameDir, string gtaExe, string sampDll)
+	{
+		if (resolvedIp == null)
+		{
+			connecting = false;
+			btnConnect.Enabled = true;
+			SetStatus("ล้มเหลว — ไม่พบ IP ของ " + host);
+			ShowErr("ไม่สามารถค้นหา IP จาก Hostname ได้: " + host);
+			return;
+		}
+		if (check != null && !check.Online)
+		{
+			if (MessageBox.Show(this, "เซิร์ฟเวอร์ " + resolvedIp + ":" + port + " ไม่ตอบสนองต่อการตรวจสถานะ (เซิร์ฟเวอร์อาจปิด หรือ Firewall บล็อก Port " + port + " / UDP Query)\r\n\r\nคุณยังต้องการเข้าสู่เกมต่อไปหรือไม่?", "แจ้งเตือนการเชื่อมต่อ", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+			{
+				connecting = false;
+				btnConnect.Enabled = true;
+				SetStatus("ยกเลิกการเชื่อมต่อ");
+				return;
+			}
+		}
 		try
 		{
-			SaveIconFromGame(text6);
+			SaveIconFromGame(gtaExe);
 		}
 		catch
 		{
 		}
 
 		string sPass = (txtServerPass != null) ? FieldVal(txtServerPass) : "";
-		ServerEntry matchedEntry = FindEntry(text2, text3, false);
+		ServerEntry matchedEntry = FindEntry(host, portStr, false);
 		if (string.IsNullOrEmpty(sPass) && matchedEntry != null && matchedEntry.Locked)
 		{
-			string prompted = PromptPassword((matchedEntry.Name.Length > 0) ? matchedEntry.Name : (text2 + ":" + text3));
+			string dName = (check != null && !string.IsNullOrEmpty(check.Name)) ? check.Name : ((matchedEntry.Name.Length > 0) ? matchedEntry.Name : (host + ":" + portStr));
+			string prompted = PromptPassword(dName);
 			if (prompted == null)
 			{
+				connecting = false;
+				btnConnect.Enabled = true;
+				SetStatus("ยกเลิกการเชื่อมต่อ");
 				return;
 			}
 			sPass = prompted;
 		}
 
 		SaveConfig();
-		AddHistory(text2, text3);
-		btnConnect.Enabled = false;
-		connecting = true;
+		AddHistory(host, portStr);
 		SetStatus("กำลังเปิดเกม...");
 		Refresh();
 		bool flag = false;
 		try
 		{
 			CyberAudio.PlayLaunch();
-			StartGameAndInject(text6, text7, gameDir, text, text2, text3, sPass);
+			StartGameAndInject(gtaExe, sampDll, gameDir, nick, host, portStr, sPass);
 			flag = true;
-			SetStatus("เกมกำลังทำงาน • เชื่อมต่อ " + text2 + ":" + text3);
+			SetStatus("เกมกำลังทำงาน • เชื่อมต่อ " + host + ":" + portStr);
 		}
 		catch (Exception ex)
 		{
@@ -527,14 +579,16 @@ internal partial class LauncherForm
 		}
 		if (flag)
 		{
-			StartPlaytime(text2 + "|" + text3);
-			string sName = (lblHeroName != null && !string.IsNullOrEmpty(lblHeroName.Text) && !lblHeroName.Text.StartsWith("กรอก") && !lblHeroName.Text.StartsWith("กำลัง")) ? lblHeroName.Text : (text2 + ":" + text3);
-			int pCur = (ring != null) ? ring.Current : -1;
-			int pMax = (ring != null) ? ring.Max : -1;
-			DiscordRpc.UpdateGamePresence(sName, text2, text3, pCur, pMax);
-			if (swClose.Checked)
+			bool closeAfter = swClose.Checked;
+			StartPlaytime(host + "|" + portStr, closeAfter);
+			string sName = (check != null && check.Online && check.Name.Length > 0) ? check.Name : ((lblHeroName != null && !string.IsNullOrEmpty(lblHeroName.Text) && !lblHeroName.Text.StartsWith("กรอก") && !lblHeroName.Text.StartsWith("กำลัง")) ? lblHeroName.Text : (host + ":" + portStr));
+			int pCur = (check != null && check.Online) ? check.Players : ((ring != null) ? ring.Current : -1);
+			int pMax = (check != null && check.Online) ? check.Max : ((ring != null) ? ring.Max : -1);
+			DiscordRpc.UpdateGamePresence(sName, host, portStr, pCur, pMax);
+			if (closeAfter)
 			{
-				Close();
+				base.ShowInTaskbar = false;
+				Hide();
 			}
 			else
 			{

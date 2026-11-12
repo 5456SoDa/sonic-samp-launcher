@@ -79,6 +79,9 @@ internal class RustCore : ICore
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	private static extern IntPtr core_snapshot_delete(byte[] gameDir, byte[] snapshotId);
 
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_db_close();
+
 	public string EngineName
 	{
 		get { return engineVersion; }
@@ -550,8 +553,16 @@ internal class RustCore : ICore
 		int files = GetInt(s, "file_count", 0);
 		long raw = GetLong(s, "total_raw_bytes", 0);
 		long comp = GetLong(s, "total_compressed_bytes", 0);
-		return string.Format("สำรอง '{0}' ({1} ไฟล์: {2} KB → {3} KB zstd)",
+		int skipped = GetInt(s, "skipped_large_count", 0);
+		List<string> skippedList = GetStrList(s, "skipped_large_files");
+		string msg = string.Format("สำรอง '{0}' ({1} ไฟล์: {2} KB → {3} KB zstd)",
 			GetStr(s, "name"), files, Math.Max(1, raw / 1024), Math.Max(1, comp / 1024));
+		if (skipped > 0)
+		{
+			msg += string.Format("\r\n⚠ ข้ามไฟล์ > 32 MB จำนวน {0} ไฟล์ ({1})",
+				skipped, string.Join(", ", skippedList.ToArray()));
+		}
+		return msg;
 	}
 
 	public List<SnapshotInfo> ListSnapshots(string gameDir)
@@ -580,6 +591,8 @@ internal class RustCore : ICore
 						info.FileCount = GetInt(sd, "file_count", 0);
 						info.TotalRawBytes = GetLong(sd, "total_raw_bytes", 0);
 						info.TotalCompressedBytes = GetLong(sd, "total_compressed_bytes", 0);
+						info.SkippedLargeCount = GetInt(sd, "skipped_large_count", 0);
+						info.SkippedLargeFiles = GetStrList(sd, "skipped_large_files");
 						list.Add(info);
 					}
 				}
@@ -612,7 +625,13 @@ internal class RustCore : ICore
 		{
 			return "กู้คืน Snapshot เรียบร้อยแล้ว";
 		}
-		return "กู้คืน '" + GetStr(r, "name") + "' (" + GetInt(r, "restored_files", 0) + " ไฟล์) สำเร็จ";
+		string msg = "กู้คืน '" + GetStr(r, "name") + "' (" + GetInt(r, "restored_files", 0) + " ไฟล์) สำเร็จ";
+		string preId = GetStr(r, "pre_restore_id");
+		if (!string.IsNullOrEmpty(preId))
+		{
+			msg += " • สำรองสถานะก่อนกู้คืนไว้แล้ว (" + preId + ")";
+		}
+		return msg;
 	}
 
 	public void DeleteSnapshot(string gameDir, string snapshotId)
@@ -621,6 +640,17 @@ internal class RustCore : ICore
 		if (!string.IsNullOrEmpty(err))
 		{
 			throw new Exception(err);
+		}
+	}
+
+	public void CloseDb()
+	{
+		try
+		{
+			core_db_close();
+		}
+		catch
+		{
 		}
 	}
 

@@ -902,4 +902,8 @@ internal class ManagedCore : ICore
 	{
 		throw new Exception("ต้องใช้งาน samp_core.dll");
 	}
+
+	public void CloseDb()
+	{
+	}
 }

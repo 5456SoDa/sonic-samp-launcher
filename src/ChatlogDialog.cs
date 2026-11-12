@@ -158,17 +158,9 @@ internal class ChatlogDialog : Form
 
 		try
 		{
-			// Read with FileShare to avoid lock when game is running
-			using (FileStream fs = new FileStream(chatlogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-			using (StreamReader sr = new StreamReader(fs, Encoding.Default))
-			{
-				string line;
-				while ((line = sr.ReadLine()) != null)
-				{
-					allLines.Add(line);
-				}
-			}
-			lblInfo.Text = string.Format("พบไฟล์ chatlog.txt (รวม {0} บรรทัด)", allLines.Count);
+			ChatTailResult res = ChatLogReader.ReadTail(chatlogPath, 2 * 1024 * 1024, 5000);
+			allLines = res.Lines;
+			lblInfo.Text = string.Format("พบไฟล์ chatlog.txt (แสดง {0} บรรทัดล่าสุด)", allLines.Count);
 			FilterLines();
 		}
 		catch (Exception ex)

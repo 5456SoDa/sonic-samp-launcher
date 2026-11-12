@@ -276,46 +276,40 @@ internal partial class LauncherForm
 
 	private void ApplySkyGfxPreset(string mode)
 	{
-		activeSkyGfx = mode;
 		string g = GetGameDir();
 		string target = Path.Combine(g, "skygfx.ini");
 		try
 		{
-			if (mode == "ps2")
-			{
-				string src = Path.Combine(g, "skygfx1.ini");
-				if (File.Exists(src))
-				{
-					File.Copy(src, target, true);
-				}
-				ToastOk("สลับโทนภาพเป็น PS2 Classic เรียบร้อย");
-			}
-			else if (mode == "pc")
-			{
-				string src2 = Path.Combine(g, "skygfx2.ini");
-				if (File.Exists(src2))
-				{
-					File.Copy(src2, target, true);
-				}
-				ToastOk("สลับโทนภาพเป็น PC Enhanced เรียบร้อย");
-			}
-			else if (mode == "mobile")
-			{
-				string src3 = Path.Combine(g, "skygfx3.ini");
-				if (File.Exists(src3))
-				{
-					File.Copy(src3, target, true);
-				}
-				ToastOk("สลับโทนภาพเป็น Mobile เรียบร้อย");
-			}
-			else if (mode == "off")
+			if (mode == "off")
 			{
 				if (File.Exists(target))
 				{
 					File.Delete(target);
+					ToastOk("ปิดใช้งาน SkyGfx แล้ว");
 				}
-				ToastOk("ปิดใช้งาน SkyGfx แล้ว");
+				else
+				{
+					Toast("SkyGfx ปิดใช้งานอยู่แล้ว");
+				}
 			}
+			else
+			{
+				string srcName = (mode == "ps2") ? "skygfx1.ini" : ((mode == "pc") ? "skygfx2.ini" : ((mode == "mobile") ? "skygfx3.ini" : null));
+				string label = (mode == "ps2") ? "PS2 Classic" : ((mode == "pc") ? "PC Enhanced" : "Mobile");
+				if (srcName == null)
+				{
+					return;
+				}
+				string src = Path.Combine(g, srcName);
+				if (!File.Exists(src))
+				{
+					ShowErr("ไม่พบไฟล์ " + srcName + " ในโฟลเดอร์เกม:\r\n" + g);
+					return;
+				}
+				File.Copy(src, target, true);
+				ToastOk("สลับโทนภาพเป็น " + label + " เรียบร้อย");
+			}
+			activeSkyGfx = mode;
 			UpdateSkyGfxButtons();
 			SaveConfig();
 		}
@@ -353,24 +347,68 @@ internal partial class LauncherForm
 		btnSgOff.BorderColor = (activeSkyGfx == "off") ? Color.FromArgb(180, 240, 255) : Color.FromArgb(35, 52, 80);
 	}
 
+	private static void UpdateIniKeys(string path, Dictionary<string, string> updates, bool spacedEquals)
+	{
+		List<string> lines = new List<string>(File.ReadAllLines(path, Encoding.UTF8));
+		HashSet<string> applied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		for (int i = 0; i < lines.Count; i++)
+		{
+			string trimmed = lines[i].Trim();
+			if (trimmed.Length == 0 || trimmed.StartsWith(";") || trimmed.StartsWith("#") || trimmed.StartsWith("["))
+			{
+				continue;
+			}
+			int eq = lines[i].IndexOf('=');
+			if (eq <= 0)
+			{
+				continue;
+			}
+			string key = lines[i].Substring(0, eq).Trim();
+			string newVal;
+			if (updates.TryGetValue(key, out newVal))
+			{
+				lines[i] = key + (spacedEquals ? " = " : "=") + newVal;
+				applied.Add(key);
+			}
+		}
+		foreach (KeyValuePair<string, string> kv in updates)
+		{
+			if (!applied.Contains(kv.Key))
+			{
+				lines.Add(kv.Key + (spacedEquals ? " = " : "=") + kv.Value);
+			}
+		}
+		File.WriteAllLines(path, lines.ToArray(), new UTF8Encoding(false));
+	}
+
 	private void ApplyFpsLimit(int fps)
 	{
-		activeFpsLimit = fps;
 		string gameDir = GetGameDir();
-		string text = Path.Combine(gameDir, "scripts", "FPSUnlock.ini");
-		string text2 = Path.Combine(gameDir, "scripts", "FramerateVigilante.ini");
+		string fpsUnlockPath = Path.Combine(gameDir, "scripts", "FPSUnlock.ini");
+		string fvPath = Path.Combine(gameDir, "scripts", "FramerateVigilante.ini");
+		bool hasUnlock = File.Exists(fpsUnlockPath);
+		bool hasFv = File.Exists(fvPath);
+		if (!hasUnlock && !hasFv)
+		{
+			ShowErr("ไม่พบไฟล์ตั้งค่า FPS ในโฟลเดอร์ scripts\r\n(scripts\\FPSUnlock.ini หรือ scripts\\FramerateVigilante.ini)");
+			return;
+		}
 		try
 		{
-			if (File.Exists(text))
+			if (hasUnlock)
 			{
-				string contents = "[Settings]\r\nUnlockFPS = true\r\nCustomFPS = " + fps + "\r\nPhysicsScale = 0.6\r\n";
-				File.WriteAllText(text, contents, Encoding.UTF8);
+				Dictionary<string, string> u1 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+				u1["UnlockFPS"] = "true";
+				u1["CustomFPS"] = fps.ToString();
+				UpdateIniKeys(fpsUnlockPath, u1, true);
 			}
-			if (File.Exists(text2))
+			if (hasFv)
 			{
-				string contents2 = "[Settings]\r\nFPSlimit=" + fps + "\r\nRefreshRate=0\r\nAutoLimitFPS=0\r\nVehicleHandlingPatches=1\r\n";
-				File.WriteAllText(text2, contents2, Encoding.UTF8);
+				Dictionary<string, string> u2 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+				u2["FPSlimit"] = fps.ToString();
+				UpdateIniKeys(fvPath, u2, false);
 			}
+			activeFpsLimit = fps;
 			UpdateFpsButtons();
 			SaveConfig();
 			if (fps == 0)
@@ -481,8 +519,15 @@ internal partial class LauncherForm
 				{
 					BeginInvoke((MethodInvoker)delegate
 					{
-						SetStatus(summary);
-						ToastOk(summary);
+						SetStatus(summary.Replace("\r\n", " • "));
+						if (summary.IndexOf("⚠") >= 0)
+						{
+							MessageBox.Show(this, summary, "สำรอง Snapshot แล้ว (มีคำเตือน)", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+						}
+						else
+						{
+							ToastOk(summary);
+						}
 					});
 				}
 			}
@@ -567,7 +612,8 @@ internal partial class LauncherForm
 				{
 					long rawKb = Math.Max(1, s.TotalRawBytes / 1024);
 					long compKb = Math.Max(1, s.TotalCompressedBytes / 1024);
-					lb.Items.Add(s.Name + "  [" + s.CreatedAt + "]  (" + s.FileCount + " ไฟล์, " + rawKb + " KB → " + compKb + " KB)");
+					string warn = (s.SkippedLargeCount > 0) ? ("  [⚠ ข้าม >32MB: " + s.SkippedLargeCount + "]") : "";
+					lb.Items.Add(s.Name + "  [" + s.CreatedAt + "]  (" + s.FileCount + " ไฟล์, " + rawKb + " KB → " + compKb + " KB)" + warn);
 				}
 				if (lb.Items.Count > 0) lb.SelectedIndex = 0;
 			};
@@ -580,12 +626,13 @@ internal partial class LauncherForm
 				int idx = lb.SelectedIndex;
 				if (idx < 0 || idx >= snaps.Count) return;
 				SnapshotInfo sel = snaps[idx];
-				if (MessageBox.Show(dlg, "กู้คืน Snapshot '" + sel.Name + "' (" + sel.FileCount + " ไฟล์) กลับไปยังโฟลเดอร์เกม?", "ยืนยันการกู้คืน", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+				if (MessageBox.Show(dlg, "กู้คืน Snapshot '" + sel.Name + "' (" + sel.FileCount + " ไฟล์) กลับไปยังโฟลเดอร์เกม?\r\n(ระบบจะสร้าง Auto Pre-Restore สำรองสถานะปัจจุบันไว้ให้ก่อนอัตโนมัติ)", "ยืนยันการกู้คืน", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 				try
 				{
 					string msg = core.RestoreSnapshot(gameDir, sel.Id);
-					ToastOk(msg);
+					reload();
 					RunHealthCheck();
+					MessageBox.Show(dlg, msg, "กู้คืน Snapshot สำเร็จ", MessageBoxButtons.OK, MessageBoxIcon.Information);
 					dlg.Close();
 				}
 				catch (Exception ex)
@@ -634,28 +681,33 @@ internal partial class LauncherForm
 	private void RunAutoFix()
 	{
 		string g = GetGameDir();
-		HealthCheckReport rep = lastHealthReport;
-		if (rep != null && rep.FixableCount == 0 && !rep.InProgramFiles && !rep.MissingDx9)
+		HealthCheckReport rep = lastHealthReport ?? core.CheckHealth(g, activeSkyGfx);
+		lastHealthReport = rep;
+		if (rep == null || rep.FixableCount == 0)
 		{
-			ToastOk("ระบบปกติดี ไม่มีปัญหาที่ต้องซ่อมอัตโนมัติ");
+			if (rep != null && (rep.InProgramFiles || rep.MissingDx9))
+			{
+				ShowErr("ปัญหาที่พบ (Program Files หรือ DirectX 9) ต้องแก้ไขด้วยตนเอง ไม่สามารถ Auto-Fix ได้");
+			}
+			else
+			{
+				ToastOk("ระบบปกติดี ไม่มีปัญหาที่ต้องซ่อมอัตโนมัติ");
+			}
 			return;
 		}
-		if (rep != null && rep.FixableCount > 0)
+		StringBuilder q = new StringBuilder();
+		q.AppendLine("ต้องการดำเนินการซ่อมอัตโนมัติรายการต่อไปนี้หรือไม่?");
+		if (rep.DuplicateAsis.Count > 0)
 		{
-			StringBuilder q = new StringBuilder();
-			q.AppendLine("ต้องการดำเนินการซ่อมอัตโนมัติรายการต่อไปนี้หรือไม่?");
-			if (rep.DuplicateAsis.Count > 0)
-			{
-				q.AppendLine("• ปิดไฟล์ .asi ที่ซ้ำซ้อน (.disabled): " + string.Join(", ", rep.DuplicateAsis.ToArray()));
-			}
-			if (rep.ReadonlyFiles.Count > 0)
-			{
-				q.AppendLine("• ปลดสถานะ Read-Only: " + string.Join(", ", rep.ReadonlyFiles.ToArray()));
-			}
-			if (MessageBox.Show(this, q.ToString(), "แก้ไขอัตโนมัติ (Auto-fix)", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-			{
-				return;
-			}
+			q.AppendLine("• ปิดไฟล์ .asi ที่ซ้ำซ้อน (.disabled): " + string.Join(", ", rep.DuplicateAsis.ToArray()));
+		}
+		if (rep.ReadonlyFiles.Count > 0)
+		{
+			q.AppendLine("• ปลดสถานะ Read-Only: " + string.Join(", ", rep.ReadonlyFiles.ToArray()));
+		}
+		if (MessageBox.Show(this, q.ToString(), "แก้ไขอัตโนมัติ (Auto-fix)", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+		{
+			return;
 		}
 		string msg = core.AutoFixHealth(g);
 		MessageBox.Show(this, msg, "ผลการตรวจซ่อมระบบ", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -703,6 +755,7 @@ internal partial class LauncherForm
 						SetHealth(4, rep.GfxMsg, HealthColor(rep.GfxStatus, cOk, cWarn, cBad, colSub));
 						if (btnAutoFix != null && !btnAutoFix.IsDisposed)
 						{
+							btnAutoFix.Enabled = rep.FixableCount > 0;
 							if (rep.FixableCount > 0)
 							{
 								btnAutoFix.Text = "⚡ แก้ไข (" + rep.FixableCount + ")";

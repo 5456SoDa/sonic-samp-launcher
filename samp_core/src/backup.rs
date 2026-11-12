@@ -25,6 +25,10 @@ pub struct SnapshotManifest {
     pub total_raw_bytes: u64,
     pub total_compressed_bytes: u64,
     pub files: Vec<SnapshotFileEntry>,
+    #[serde(default)]
+    pub skipped_large_count: usize,
+    #[serde(default)]
+    pub skipped_large_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,6 +39,8 @@ pub struct SnapshotSummary {
     pub file_count: usize,
     pub total_raw_bytes: u64,
     pub total_compressed_bytes: u64,
+    pub skipped_large_count: usize,
+    pub skipped_large_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,6 +48,7 @@ pub struct RestoreSummary {
     pub id: String,
     pub name: String,
     pub restored_files: usize,
+    pub pre_restore_id: String,
 }
 
 fn backup_root(game_dir: &Path) -> PathBuf {
@@ -93,11 +100,19 @@ fn should_backup_scripts_or_cleo(name: &str) -> bool {
         || lower.ends_with(".cm")
 }
 
+struct CollectedTargets {
+    files: Vec<PathBuf>,
+    skipped_large_count: usize,
+    skipped_large_files: Vec<String>,
+}
+
 fn walk_collect(
+    game_dir: &Path,
     dir: &Path,
     max_depth: usize,
-    filter: &dyn Fn(&Path, u64) -> bool,
-    out: &mut Vec<PathBuf>,
+    allow_zero: bool,
+    eligible: &dyn Fn(&Path) -> bool,
+    out: &mut CollectedTargets,
 ) {
     if max_depth == 0 || !dir.is_dir() {
         return;
@@ -110,61 +125,80 @@ fn walk_collect(
     for p in paths {
         if p.is_dir() {
             if max_depth > 1 {
-                walk_collect(&p, max_depth - 1, filter, out);
+                walk_collect(game_dir, &p, max_depth - 1, allow_zero, eligible, out);
             }
-        } else if let Ok(meta) = fs::metadata(&p) {
-            if filter(&p, meta.len()) {
-                out.push(p);
+        } else if eligible(&p) {
+            if let Ok(meta) = fs::metadata(&p) {
+                let sz = meta.len();
+                if sz > MAX_MODLOADER_FILE_BYTES {
+                    out.skipped_large_count += 1;
+                    if out.skipped_large_files.len() < 10 {
+                        let rel = p
+                            .strip_prefix(game_dir)
+                            .unwrap_or(&p)
+                            .to_string_lossy()
+                            .replace('/', "\\");
+                        out.skipped_large_files.push(rel);
+                    }
+                } else if sz > 0 || allow_zero {
+                    out.files.push(p);
+                }
             }
         }
     }
 }
 
-fn collect_snapshot_targets(game_dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
+fn collect_snapshot_targets(game_dir: &Path) -> CollectedTargets {
+    let mut out = CollectedTargets {
+        files: Vec::new(),
+        skipped_large_count: 0,
+        skipped_large_files: Vec::new(),
+    };
     walk_collect(
         game_dir,
+        game_dir,
         1,
-        &|p, sz| {
-            sz <= MAX_MODLOADER_FILE_BYTES
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(should_backup_root)
-                    .unwrap_or(false)
+        true,
+        &|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(should_backup_root)
+                .unwrap_or(false)
         },
         &mut out,
     );
     walk_collect(
+        game_dir,
         &game_dir.join("scripts"),
         3,
-        &|p, sz| {
-            sz <= MAX_MODLOADER_FILE_BYTES
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(should_backup_scripts_or_cleo)
-                    .unwrap_or(false)
+        true,
+        &|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(should_backup_scripts_or_cleo)
+                .unwrap_or(false)
         },
         &mut out,
     );
     walk_collect(
+        game_dir,
         &game_dir.join("CLEO"),
         3,
-        &|p, sz| {
-            sz <= MAX_MODLOADER_FILE_BYTES
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(should_backup_scripts_or_cleo)
-                    .unwrap_or(false)
+        true,
+        &|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(should_backup_scripts_or_cleo)
+                .unwrap_or(false)
         },
         &mut out,
     );
     walk_collect(
+        game_dir,
         &game_dir.join("modloader"),
         6,
-        &|p, sz| {
-            if sz == 0 || sz > MAX_MODLOADER_FILE_BYTES {
-                return false;
-            }
+        false,
+        &|p| {
             let lower = p
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -181,8 +215,8 @@ pub fn create_snapshot(game_dir: &Path, name: &str) -> Result<SnapshotSummary, S
     if !game_dir.is_dir() {
         return Err("ไม่พบโฟลเดอร์เกม".into());
     }
-    let targets = collect_snapshot_targets(game_dir);
-    if targets.is_empty() {
+    let collected = collect_snapshot_targets(game_dir);
+    if collected.files.is_empty() {
         return Err("ไม่พบไฟล์ .ini / .asi / .cleo / modloader สำหรับสำรอง".into());
     }
 
@@ -206,11 +240,11 @@ pub fn create_snapshot(game_dir: &Path, name: &str) -> Result<SnapshotSummary, S
         name.trim().to_string()
     };
 
-    let mut entries = Vec::with_capacity(targets.len());
+    let mut entries = Vec::with_capacity(collected.files.len());
     let mut total_raw = 0u64;
     let mut total_comp = 0u64;
 
-    for full in targets {
+    for full in collected.files {
         let Ok(raw) = fs::read(&full) else {
             continue;
         };
@@ -250,6 +284,8 @@ pub fn create_snapshot(game_dir: &Path, name: &str) -> Result<SnapshotSummary, S
         total_raw_bytes: total_raw,
         total_compressed_bytes: total_comp,
         files: entries,
+        skipped_large_count: collected.skipped_large_count,
+        skipped_large_files: collected.skipped_large_files.clone(),
     };
 
     let manifest_json =
@@ -265,6 +301,8 @@ pub fn create_snapshot(game_dir: &Path, name: &str) -> Result<SnapshotSummary, S
         file_count,
         total_raw_bytes: total_raw,
         total_compressed_bytes: total_comp,
+        skipped_large_count: collected.skipped_large_count,
+        skipped_large_files: collected.skipped_large_files,
     })
 }
 
@@ -291,6 +329,8 @@ pub fn list_snapshots(game_dir: &Path) -> Result<Vec<SnapshotSummary>, String> {
                 file_count: m.files.len(),
                 total_raw_bytes: m.total_raw_bytes,
                 total_compressed_bytes: m.total_compressed_bytes,
+                skipped_large_count: m.skipped_large_count,
+                skipped_large_files: m.skipped_large_files,
             });
         }
     }
@@ -308,6 +348,15 @@ pub fn restore_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<RestoreSum
         .map_err(|e| format!("ไม่พบ snapshot '{}': {}", clean_id, e))?;
     let manifest: SnapshotManifest =
         serde_json::from_str(&raw_json).map_err(|e| format!("Snapshot เสียหาย: {}", e))?;
+
+    // Auto-backup current game state before applying restore (unless no target files exist)
+    let pre_restore_id = match create_snapshot(
+        game_dir,
+        &format!("Auto Pre-Restore ({})", manifest.name),
+    ) {
+        Ok(s) => s.id,
+        Err(_) => String::new(),
+    };
 
     let blobs = blobs_dir(game_dir);
     let mut restored = 0usize;
@@ -360,6 +409,7 @@ pub fn restore_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<RestoreSum
         id: manifest.id,
         name: manifest.name,
         restored_files: restored,
+        pre_restore_id,
     })
 }
 
@@ -438,11 +488,12 @@ mod tests {
         assert_eq!(blob_count, 3);
         assert_ne!(s1.id, s2.id);
 
-        // Mutate files and delete readme, then restore s1
+        // Mutate files and delete readme, then restore s1 (auto pre-restore backup is created)
         fs::write(dir.join("skygfx.ini"), b"BROKEN").unwrap();
         fs::remove_file(dir.join("modloader").join("my_mod").join("readme.txt")).unwrap();
         let res = restore_snapshot(&dir, &s1.id).unwrap();
         assert_eq!(res.restored_files, 3);
+        assert!(!res.pre_restore_id.is_empty());
         assert_eq!(
             fs::read_to_string(dir.join("skygfx.ini")).unwrap(),
             "[SkyGfx]\nmode=ps2\n"
@@ -453,13 +504,32 @@ mod tests {
         );
 
         let list = list_snapshots(&dir).unwrap();
-        assert_eq!(list.len(), 2);
+        assert_eq!(list.len(), 3);
 
-        // Deleting s1 keeps blobs still referenced by s2; deleting s2 collects all blobs
+        // Deleting s1 & pre keeps blobs still referenced by s2; deleting s2 collects all blobs
         delete_snapshot(&dir, &s1.id).unwrap();
+        delete_snapshot(&dir, &res.pre_restore_id).unwrap();
         assert_eq!(fs::read_dir(blobs_dir(&dir)).unwrap().count(), 3);
         delete_snapshot(&dir, &s2.id).unwrap();
         assert_eq!(fs::read_dir(blobs_dir(&dir)).unwrap().count(), 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_snapshot_reports_skipped_large_files() {
+        let dir = temp_game("large");
+        fs::create_dir_all(dir.join("modloader").join("hd")).unwrap();
+        fs::write(dir.join("skygfx.ini"), b"ok").unwrap();
+        let big = dir.join("modloader").join("hd").join("huge.txd");
+        let f = File::create(&big).unwrap();
+        f.set_len(MAX_MODLOADER_FILE_BYTES + 1024).unwrap();
+        drop(f);
+
+        let snap = create_snapshot(&dir, "With huge").unwrap();
+        assert_eq!(snap.file_count, 1);
+        assert_eq!(snap.skipped_large_count, 1);
+        assert_eq!(snap.skipped_large_files, vec!["modloader\\hd\\huge.txd"]);
 
         let _ = fs::remove_dir_all(&dir);
     }
