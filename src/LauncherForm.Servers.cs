@@ -13,6 +13,13 @@ using System.Windows.Forms;
 
 internal partial class LauncherForm
 {
+	private ulong activeScanHandle = 0;
+	private System.Windows.Forms.Timer scanPollTimer;
+	private bool activeScanIsPublic = false;
+	private string pubCachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "public_servers_cache.json");
+	private Dictionary<string, ServerEntry> activeScanLookup = new Dictionary<string, ServerEntry>();
+	private Dictionary<ServerEntry, ListViewItem> rowByEntry = new Dictionary<ServerEntry, ListViewItem>();
+
 	private void BuildSrvPage()
 	{
 		// Top Search & Filter Bar (Y=0, H=42, W=668)
@@ -567,6 +574,23 @@ internal partial class LauncherForm
 		{
 			return;
 		}
+		if (core.SupportsBatchScan)
+		{
+			CancelActiveScan();
+			fetchingPub = true;
+			activeScanIsPublic = true;
+			activeScanLookup.Clear();
+			SetStatus("กำลังดึงรายชื่อเซิร์ฟเวอร์สาธารณะ (Rust Engine)...");
+			activeScanHandle = core.StartPublicScan(pubCachePath, 64);
+			if (activeScanHandle == 0)
+			{
+				fetchingPub = false;
+				SetStatus("ไม่สามารถเริ่มสแกนเซิร์ฟเวอร์สาธารณะได้");
+				return;
+			}
+			StartScanPollTimer();
+			return;
+		}
 		fetchingPub = true;
 		SetStatus("กำลังดึงรายชื่อเซิร์ฟเวอร์สาธารณะ...");
 		ThreadPool.QueueUserWorkItem(delegate
@@ -725,6 +749,24 @@ internal partial class LauncherForm
 			FinishRefresh();
 			return;
 		}
+		if (core.SupportsBatchScan)
+		{
+			CancelActiveScan();
+			activeScanIsPublic = false;
+			activeScanLookup.Clear();
+			foreach (ServerEntry item in list)
+			{
+				activeScanLookup[item.Ip + ":" + item.Port] = item;
+			}
+			activeScanHandle = core.StartScan(list, 64);
+			if (activeScanHandle == 0)
+			{
+				FinishRefresh();
+				return;
+			}
+			StartScanPollTimer();
+			return;
+		}
 		int remaining = list.Count;
 		foreach (ServerEntry item in list)
 		{
@@ -816,6 +858,140 @@ internal partial class LauncherForm
 		});
 	}
 
+	private void StartScanPollTimer()
+	{
+		if (scanPollTimer == null)
+		{
+			scanPollTimer = new System.Windows.Forms.Timer();
+			scanPollTimer.Interval = 50;
+			scanPollTimer.Tick += delegate
+			{
+				PollActiveScan();
+			};
+		}
+		scanPollTimer.Start();
+	}
+
+	private void CancelActiveScan()
+	{
+		if (scanPollTimer != null)
+		{
+			scanPollTimer.Stop();
+		}
+		if (activeScanHandle != 0)
+		{
+			core.CancelScan(activeScanHandle);
+			activeScanHandle = 0;
+		}
+		if (activeScanIsPublic)
+		{
+			fetchingPub = false;
+		}
+	}
+
+	private void PollActiveScan()
+	{
+		if (activeScanHandle == 0 || base.IsDisposed)
+		{
+			if (scanPollTimer != null) scanPollTimer.Stop();
+			return;
+		}
+		ScanPollResult batch = core.PollScan(activeScanHandle, 64);
+		if (batch.List != null)
+		{
+			pub = batch.List;
+			activeScanLookup.Clear();
+			foreach (ServerEntry se in pub)
+			{
+				activeScanLookup[se.Ip + ":" + se.Port] = se;
+			}
+			if (viewMode == "public")
+			{
+				RebuildList();
+				if (batch.FromCache)
+				{
+					SetStatus("โหมดออฟไลน์ — แสดงรายชื่อจากแคช " + pub.Count + " เซิร์ฟเวอร์");
+				}
+				else
+				{
+					SetStatus("เซิร์ฟเวอร์สาธารณะ " + pub.Count + " เซิร์ฟเวอร์ — กำลังตรวจ Ping...");
+				}
+			}
+		}
+		if (batch.Updates != null && batch.Updates.Count > 0)
+		{
+			lstSrv.BeginUpdate();
+			try
+			{
+				foreach (ScanUpdateItem u in batch.Updates)
+				{
+					string key = u.Ip + ":" + u.Port;
+					ServerEntry entry;
+					if (!activeScanLookup.TryGetValue(key, out entry))
+					{
+						continue;
+					}
+					if (u.Online)
+					{
+						entry.Name = u.Name;
+						entry.Players = u.Players;
+						entry.Max = u.Max;
+						entry.Ping = u.Ping;
+						if (u.IsOpenMp)
+						{
+							entry.IsOpenMp = true;
+						}
+						if (entry.Fav || hist.Contains(entry))
+						{
+							RecordStat(entry.Ip, entry.Port, u.Players);
+						}
+					}
+					else
+					{
+						if (!activeScanIsPublic || entry.Players < 0)
+						{
+							entry.Players = -1;
+						}
+						entry.Ping = -1;
+					}
+					ListViewItem lvi;
+					if (rowByEntry.TryGetValue(entry, out lvi))
+					{
+						PaintEntry(lvi, entry);
+					}
+				}
+			}
+			finally
+			{
+				lstSrv.EndUpdate();
+			}
+		}
+		if (batch.Error != null && batch.Error.Length > 0 && activeScanIsPublic && pub.Count == 0)
+		{
+			if (viewMode == "public")
+			{
+				SetStatus("ดึงรายการสาธารณะไม่สำเร็จ — ตรวจอินเทอร์เน็ตแล้วกดรีเฟรชอีกครั้ง");
+			}
+		}
+		if (batch.Done)
+		{
+			if (scanPollTimer != null) scanPollTimer.Stop();
+			activeScanHandle = 0;
+			if (activeScanIsPublic)
+			{
+				fetchingPub = false;
+				if (viewMode == "public" && pub.Count > 0 && !batch.FromCache)
+				{
+					SetStatus("เซิร์ฟเวอร์สาธารณะ " + pub.Count + " เซิร์ฟเวอร์ • ตรวจสถานะครบแล้ว");
+				}
+			}
+			else
+			{
+				FinishRefresh();
+			}
+		}
+	}
+
 	private void ApplyEntryQuery(ServerEntry e, QueryResult qr)
 	{
 		if (qr.Online)
@@ -838,13 +1014,10 @@ internal partial class LauncherForm
 			e.Players = -1;
 			e.Ping = -1;
 		}
-		foreach (ListViewItem item in lstSrv.Items)
+		ListViewItem lvi;
+		if (rowByEntry.TryGetValue(e, out lvi))
 		{
-			if (object.ReferenceEquals(item.Tag, e))
-			{
-				PaintEntry(item, e);
-				break;
-			}
+			PaintEntry(lvi, e);
 		}
 	}
 
@@ -875,6 +1048,7 @@ internal partial class LauncherForm
 		ServerEntry serverEntry = ((lstSrv.SelectedItems.Count > 0) ? (lstSrv.SelectedItems[0].Tag as ServerEntry) : null);
 		lstSrv.BeginUpdate();
 		lstSrv.Items.Clear();
+		rowByEntry.Clear();
 		if (viewMode == "public")
 		{
 			foreach (ServerEntry item in pub)
@@ -942,6 +1116,7 @@ internal partial class LauncherForm
 		listViewItem.SubItems.Add(e.Fav ? "★ โปรด" : "ประวัติ");
 		listViewItem.Tag = e;
 		lstSrv.Items.Add(listViewItem);
+		rowByEntry[e] = listViewItem;
 		PaintEntry(listViewItem, e);
 	}
 

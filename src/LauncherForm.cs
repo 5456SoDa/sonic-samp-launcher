@@ -428,6 +428,12 @@ internal partial class LauncherForm : Form
 	protected override void OnClosed(EventArgs e)
 	{
 		base.OnClosed(e);
+		CancelActiveScan();
+		if (scanPollTimer != null)
+		{
+			scanPollTimer.Dispose();
+			scanPollTimer = null;
+		}
 		StopPubAuto();
 		StopPlaytime();
 		StopWatch("ปิดแล้ว");

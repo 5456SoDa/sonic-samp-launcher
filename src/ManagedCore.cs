@@ -93,6 +93,30 @@ internal class ManagedCore : ICore
 		get { return "C# Managed (Fallback)"; }
 	}
 
+	public bool SupportsBatchScan
+	{
+		get { return false; }
+	}
+
+	public ulong StartScan(List<ServerEntry> targets, int concurrency)
+	{
+		return 0;
+	}
+
+	public ulong StartPublicScan(string cachePath, int concurrency)
+	{
+		return 0;
+	}
+
+	public ScanPollResult PollScan(ulong handle, int maxItems)
+	{
+		return new ScanPollResult { Done = true };
+	}
+
+	public void CancelScan(ulong handle)
+	{
+	}
+
 	private static byte[] BuildQuery(string ip, int port, byte op)
 	{
 		IPAddress addr;
@@ -300,7 +324,6 @@ internal class ManagedCore : ICore
 		}
 		List<string[]> list = new List<string[]>();
 
-		// 1. Try Opcode 100 ('d' - Detailed players: ID, Name, Score, Ping)
 		byte[] arrayD = QueryRaw(resolvedIp, port, 100);
 		if (arrayD != null && arrayD.Length > 13)
 		{
@@ -333,7 +356,6 @@ internal class ManagedCore : ICore
 			}
 		}
 
-		// 2. Fallback to Opcode 99 ('c' - Basic players: Name, Score)
 		byte[] array = QueryRaw(resolvedIp, port, 99);
 		if (array == null || array.Length < 13)
 		{
