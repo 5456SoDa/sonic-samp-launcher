@@ -643,6 +643,7 @@ internal partial class LauncherForm
 
 			Label lbl = AddLbl(pWrap, "ชื่อ Snapshot (สำรอง .ini / .asi / .cleo / modloader):", fSmall, 14, 14, colSub);
 			TextBox tb = AddField(pWrap, defName, 14, 36, 332);
+			ForceText(tb, defName);
 			tb.SelectAll();
 
 			RoundedBtn ok = MakeMiniBtn("💾 สร้าง Snapshot", 174, 82, 172, 30);
@@ -1129,25 +1130,33 @@ internal partial class LauncherForm
 		}
 		foreach (string item in list)
 		{
-			string[] array3 = item.Split('|');
+			string[] array3 = item.Split(new char[1] { '|' }, 3);
 			if (array3.Length >= 2 && array3[0].Length > 0 && array3[1].Length > 0)
 			{
 				ServerEntry serverEntry = new ServerEntry();
 				serverEntry.Ip = array3[0];
 				serverEntry.Port = array3[1];
 				serverEntry.Fav = true;
+				if (array3.Length >= 3 && array3[2].Trim().Length > 0)
+				{
+					serverEntry.Name = array3[2].Trim();
+				}
 				favs.Add(serverEntry);
 			}
 		}
 		foreach (string item2 in list2)
 		{
-			string[] array4 = item2.Split('|');
+			string[] array4 = item2.Split(new char[1] { '|' }, 3);
 			if (array4.Length >= 2 && array4[0].Length > 0 && array4[1].Length > 0)
 			{
 				ServerEntry serverEntry2 = new ServerEntry();
 				serverEntry2.Ip = array4[0];
 				serverEntry2.Port = array4[1];
 				serverEntry2.Fav = false;
+				if (array4.Length >= 3 && array4[2].Trim().Length > 0)
+				{
+					serverEntry2.Name = array4[2].Trim();
+				}
 				hist.Add(serverEntry2);
 			}
 		}
@@ -1248,15 +1257,23 @@ internal partial class LauncherForm
 			stringBuilder.Append("sortdesc=").Append(sortDesc ? "1" : "0").Append("\r\n");
 			foreach (ServerEntry fav in favs)
 			{
-				stringBuilder.Append("srv=").Append(fav.Ip).Append('|')
-					.Append(fav.Port)
-					.Append("\r\n");
+				stringBuilder.Append("srv=").Append(fav.Ip).Append('|').Append(fav.Port);
+				string safeName = (fav.Name ?? "").Replace("|", " ").Replace("\r", "").Replace("\n", "").Trim();
+				if (safeName.Length > 0)
+				{
+					stringBuilder.Append('|').Append(safeName);
+				}
+				stringBuilder.Append("\r\n");
 			}
 			foreach (ServerEntry item in hist)
 			{
-				stringBuilder.Append("hist=").Append(item.Ip).Append('|')
-					.Append(item.Port)
-					.Append("\r\n");
+				stringBuilder.Append("hist=").Append(item.Ip).Append('|').Append(item.Port);
+				string safeName = (item.Name ?? "").Replace("|", " ").Replace("\r", "").Replace("\n", "").Trim();
+				if (safeName.Length > 0)
+				{
+					stringBuilder.Append('|').Append(safeName);
+				}
+				stringBuilder.Append("\r\n");
 			}
 			stringBuilder.Append("skygfx_preset=").Append(activeSkyGfx).Append("\r\n");
 			stringBuilder.Append("fps_limit=").Append(activeFpsLimit).Append("\r\n");

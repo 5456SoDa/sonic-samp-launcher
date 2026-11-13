@@ -992,6 +992,12 @@ internal partial class LauncherForm : Form
 		return label;
 	}
 
+	private sealed class FieldState
+	{
+		public string Placeholder;
+		public bool IsPlaceholder;
+	}
+
 	private TextBox AddField(Panel host, string placeholder, int x, int y, int w)
 	{
 		SmoothPanel box = new SmoothPanel(colField, 8);
@@ -1003,13 +1009,17 @@ internal partial class LauncherForm : Form
 		tb.BorderStyle = BorderStyle.None;
 		tb.BackColor = colField;
 		tb.Font = fField;
+		FieldState st = new FieldState();
+		st.Placeholder = placeholder ?? "";
+		st.IsPlaceholder = true;
 		tb.ForeColor = colSub;
-		tb.Tag = placeholder;
-		tb.Text = placeholder;
+		tb.Tag = st;
+		tb.Text = st.Placeholder;
 		tb.GotFocus += delegate
 		{
-			if (tb.ForeColor == colSub || (!string.IsNullOrEmpty(placeholder) && tb.Text == placeholder))
+			if (st.IsPlaceholder)
 			{
+				st.IsPlaceholder = false;
 				tb.ForeColor = colText;
 				tb.Text = "";
 			}
@@ -1018,10 +1028,11 @@ internal partial class LauncherForm : Form
 		};
 		tb.LostFocus += delegate
 		{
-			if (tb.Text.Length == 0)
+			if (!st.IsPlaceholder && tb.Text.Length == 0)
 			{
+				st.IsPlaceholder = true;
 				tb.ForeColor = colSub;
-				tb.Text = placeholder;
+				tb.Text = st.Placeholder;
 			}
 			box.FocusBorder = false;
 			box.Invalidate();
@@ -1031,14 +1042,23 @@ internal partial class LauncherForm : Form
 		return tb;
 	}
 
+	private bool IsFieldPlaceholder(TextBox tb)
+	{
+		if (tb == null)
+		{
+			return true;
+		}
+		FieldState st = tb.Tag as FieldState;
+		if (st != null)
+		{
+			return st.IsPlaceholder;
+		}
+		return tb.ForeColor == colSub;
+	}
+
 	private string FieldVal(TextBox tb)
 	{
-		if (tb == null || tb.ForeColor == colSub)
-		{
-			return "";
-		}
-		string ph = tb.Tag as string;
-		if (!string.IsNullOrEmpty(ph) && tb.Text == ph)
+		if (IsFieldPlaceholder(tb))
 		{
 			return "";
 		}
@@ -1047,8 +1067,27 @@ internal partial class LauncherForm : Form
 
 	private void ForceText(TextBox tb, string val)
 	{
-		tb.ForeColor = colText;
-		tb.Text = val;
+		if (tb == null)
+		{
+			return;
+		}
+		FieldState st = tb.Tag as FieldState;
+		string next = val ?? "";
+		if (next.Length == 0 && st != null && !tb.Focused)
+		{
+			st.IsPlaceholder = true;
+			tb.ForeColor = colSub;
+			tb.Text = st.Placeholder;
+		}
+		else
+		{
+			if (st != null)
+			{
+				st.IsPlaceholder = false;
+			}
+			tb.ForeColor = colText;
+			tb.Text = next;
+		}
 	}
 
 	private void ApplyAccent(Color c)

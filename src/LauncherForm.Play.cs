@@ -136,14 +136,14 @@ internal partial class LauncherForm
 		txtServerPass = AddField(pnlSrvBox, "รหัส (ถ้ามี)", 244, 34, 112);
 		txtServerPass.GotFocus += delegate
 		{
-			if (txtServerPass.ForeColor == colText && txtServerPass.Text.Length > 0)
+			if (!IsFieldPlaceholder(txtServerPass) && txtServerPass.Text.Length > 0)
 			{
 				txtServerPass.UseSystemPasswordChar = true;
 			}
 		};
 		txtServerPass.TextChanged += delegate
 		{
-			if (txtServerPass.ForeColor == colText && txtServerPass.Text.Length > 0)
+			if (!IsFieldPlaceholder(txtServerPass) && txtServerPass.Text.Length > 0)
 			{
 				txtServerPass.UseSystemPasswordChar = true;
 			}
@@ -154,11 +154,26 @@ internal partial class LauncherForm
 		};
 		txtServerPass.LostFocus += delegate
 		{
-			if (txtServerPass.ForeColor == colSub)
+			if (IsFieldPlaceholder(txtServerPass))
 			{
 				txtServerPass.UseSystemPasswordChar = false;
 			}
 		};
+
+		EventHandler onTargetEditLeave = delegate
+		{
+			if (!cfgReady || base.IsDisposed)
+			{
+				return;
+			}
+			string curKey = FieldVal(txtIp) + ":" + FieldVal(txtPort);
+			if (curKey != playQueryKey)
+			{
+				QueryPlayServer();
+			}
+		};
+		txtIp.LostFocus += onTargetEditLeave;
+		txtPort.LostFocus += onTargetEditLeave;
 
 		txtIp.TextChanged += delegate
 		{
@@ -440,6 +455,17 @@ internal partial class LauncherForm
 		if (ip.Length > 0 && ValidHost(ip) && int.TryParse(portStr, out p) && p > 0 && p <= 65535)
 		{
 			StartActiveSpark(ip, p);
+			string key = ip + ":" + portStr;
+			bool needsRefresh = (playQueryKey != key) || (lblHeroName != null && (lblHeroName.Text.StartsWith("IP / Port") || lblHeroName.Text.StartsWith("กรอก IP")));
+			if (needsRefresh)
+			{
+				QueryPlayServer();
+			}
+		}
+		else
+		{
+			StopActiveSpark();
+			if (heroSpark != null) heroSpark.ClearData(true);
 		}
 	}
 
@@ -488,8 +514,20 @@ internal partial class LauncherForm
 		int p;
 		if (ip.Length == 0 || !ValidHost(ip) || !int.TryParse(text, out p) || p <= 0 || p > 65535)
 		{
+			playQueryKey = "";
 			lblHeroName.Text = "IP / Port ไม่ถูกต้อง";
 			lblHeroName.ForeColor = Color.FromArgb(255, 120, 120);
+			lblHeroIp.Text = "—";
+			lblHeroMode.Text = "";
+			lblHeroPing.Text = "";
+			ring.Ratio = 0f;
+			ring.Current = 0;
+			ring.Max = 0;
+			ring.Line1 = "--";
+			ring.Line2 = "ไม่ถูกต้อง";
+			ring.Invalidate();
+			StopActiveSpark();
+			if (heroSpark != null) heroSpark.ClearData(true);
 			if (btnConnect != null) btnConnect.PulseGlow = false;
 			return;
 		}
@@ -566,11 +604,16 @@ internal partial class LauncherForm
 			ServerEntry serverEntry = FindEntry(ip, port, false);
 			if (serverEntry != null)
 			{
-				if (qr.IsOpenMp)
+				string prevName = serverEntry.Name ?? "";
+				ApplyEntryQuery(serverEntry, qr);
+				if (!string.Equals(prevName, serverEntry.Name, StringComparison.Ordinal))
 				{
-					serverEntry.IsOpenMp = true;
+					RebuildChips();
+					if (cfgReady)
+					{
+						SaveConfig();
+					}
 				}
-				RecordStat(ip, port, qr.Players);
 			}
 		}
 		else
@@ -748,7 +791,7 @@ internal partial class LauncherForm
 		{
 			bool closeAfter = swClose.Checked;
 			StartPlaytime(host + "|" + portStr, closeAfter);
-			string sName = (check != null && check.Online && check.Name.Length > 0) ? check.Name : ((lblHeroName != null && !string.IsNullOrEmpty(lblHeroName.Text) && !lblHeroName.Text.StartsWith("กรอก") && !lblHeroName.Text.StartsWith("กำลัง")) ? lblHeroName.Text : (host + ":" + portStr));
+			string sName = (check != null && check.Online && check.Name.Length > 0) ? check.Name : ((lblHeroName != null && !string.IsNullOrEmpty(lblHeroName.Text) && !lblHeroName.Text.StartsWith("กรอก") && !lblHeroName.Text.StartsWith("กำลัง") && !lblHeroName.Text.StartsWith("IP / Port")) ? lblHeroName.Text : (host + ":" + portStr));
 			int pCur = (check != null && check.Online) ? check.Players : ((ring != null) ? ring.Current : -1);
 			int pMax = (check != null && check.Online) ? check.Max : ((ring != null) ? ring.Max : -1);
 			DiscordRpc.UpdateGamePresence(sName, host, portStr, pCur, pMax);
