@@ -511,3 +511,47 @@ pub extern "C" fn core_ping_spark_get(ip: *const c_char, port: u16) -> *mut c_ch
 pub extern "C" fn core_ping_spark_stop() {
     let _ = catch_unwind(AssertUnwindSafe(ping_spark::stop_ping));
 }
+
+#[no_mangle]
+pub extern "C" fn core_gfx_apply_skygfx(
+    game_dir: *const c_char,
+    preset: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return into_cstr("{\"ok\":false,\"error\":\"ไม่พบโฟลเดอร์เกม\"}".into());
+        };
+        let p = read_cstr(preset).unwrap_or_else(|| "ps2".into());
+        json_ok_or_err(health::apply_skygfx_preset(Path::new(&gd), &p))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_gfx_apply_fps(game_dir: *const c_char, fps: u32) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return into_cstr("{\"ok\":false,\"error\":\"ไม่พบโฟลเดอร์เกม\"}".into());
+        };
+        json_ok_or_err(health::apply_fps_limit(Path::new(&gd), fps))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_modloader_set_priority(
+    game_dir: *const c_char,
+    folder_name: *const c_char,
+    priority: u32,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let (Some(gd), Some(fnm)) = (
+            read_cstr(game_dir).filter(|s| !s.is_empty()),
+            read_cstr(folder_name).filter(|s| !s.is_empty()),
+        ) else {
+            return into_cstr("ข้อมูลไม่ครบ".into());
+        };
+        match modloader_cfg::set_folder_priority(Path::new(&gd), &fnm, priority) {
+            Ok(()) => null_mut(),
+            Err(e) => into_cstr(e),
+        }
+    })
+}

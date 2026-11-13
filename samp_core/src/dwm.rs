@@ -23,6 +23,8 @@ const WS_MINIMIZEBOX: i32 = 0x0002_0000;
 const WS_MAXIMIZEBOX: i32 = 0x0001_0000;
 const WS_SYSMENU: i32 = 0x0008_0000;
 
+const WS_CLIPCHILDREN: i32 = 0x0200_0000;
+
 const SWP_NOSIZE: u32 = 0x0001;
 const SWP_NOMOVE: u32 = 0x0002;
 const SWP_NOZORDER: u32 = 0x0004;
@@ -38,6 +40,9 @@ const WM_NCACTIVATE: u32 = 0x0086;
 const WM_NCUAHDRAWCAPTION: u32 = 0x00AE;
 const WM_NCUAHDRAWFRAME: u32 = 0x00AF;
 
+const LVM_GETBKCOLOR: u32 = 0x1000;
+const LVM_GETITEMCOUNT: u32 = 0x1004;
+const LVM_GETITEMRECT: u32 = 0x100E;
 const LVM_GETHEADER: u32 = 0x101F;
 const HDM_GETITEMCOUNT: u32 = 0x1200;
 const HDM_GETITEMRECT: u32 = 0x1207;
@@ -48,6 +53,7 @@ const SM_CXPADDEDBORDER: i32 = 92;
 
 const FRAME_SUBCLASS_ID: usize = 0x534F_4E43;
 const HEADER_SUBCLASS_ID: usize = 0x534F_4E48;
+const LISTVIEW_SUBCLASS_ID: usize = 0x534F_4E4C;
 
 #[repr(C)]
 struct Margins {
@@ -524,8 +530,187 @@ pub fn set_dwm_accent(hwnd_val: usize, r: u8, g: u8, b: u8) -> bool {
     true
 }
 
-/// Applies DarkMode_Explorer scrollbar theming on a ListView and subclasses its child
-/// SysHeader32 so trailing header space never flashes white on Windows 10/11.
+/// Resolves the ListView background COLORREF via LVM_GETBKCOLOR, falling back to colCard.
+unsafe fn resolve_listview_bg_cr(w32: &Win32Api, hwnd: HWND) -> u32 {
+    if let Some(send_msg) = w32.send_message {
+        let bk = send_msg(hwnd, LVM_GETBKCOLOR, 0, 0) as u32;
+        if bk != 0xFFFF_FFFF && bk != 0xFF00_0000 {
+            return bk & 0x00FF_FFFF;
+        }
+    }
+    0x002B_1B13 // RGB(19, 27, 43)
+}
+
+/// Subclass for DarkMode_Explorer SysListView32: overpaints the empty region below the
+/// last item (and right of the last column) so Windows 11 uxtheme column divider lines
+/// never extend down into empty space.
+unsafe extern "system" fn listview_subclass_proc(
+    hwnd: HWND,
+    u_msg: u32,
+    w_param: usize,
+    l_param: isize,
+    u_id_subclass: usize,
+    _dw_ref_data: usize,
+) -> isize {
+    let w32 = api();
+    match u_msg {
+        WM_ERASEBKGND => {
+            if let (Some(get_cr), Some(fill_rect), Some(mk_br), Some(del_obj)) = (
+                w32.get_client_rect,
+                w32.fill_rect,
+                w32.create_solid_brush,
+                w32.delete_object,
+            ) {
+                let mut rc = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                if get_cr(hwnd, &mut rc) != 0 && w_param != 0 {
+                    let bg_cr = resolve_listview_bg_cr(w32, hwnd);
+                    let br = mk_br(bg_cr);
+                    if !br.is_null() {
+                        fill_rect(w_param as *mut c_void, &rc, br);
+                        del_obj(br);
+                        return 1;
+                    }
+                }
+            }
+            if let Some(def_proc) = w32.def_subclass_proc {
+                def_proc(hwnd, u_msg, w_param, l_param)
+            } else {
+                1
+            }
+        }
+        WM_PAINT => {
+            let res = if let Some(def_proc) = w32.def_subclass_proc {
+                def_proc(hwnd, u_msg, w_param, l_param)
+            } else {
+                0
+            };
+
+            if let (
+                Some(send_msg),
+                Some(get_cr),
+                Some(get_dc),
+                Some(rel_dc),
+                Some(fill_rect),
+                Some(mk_br),
+                Some(del_obj),
+            ) = (
+                w32.send_message,
+                w32.get_client_rect,
+                w32.get_dc,
+                w32.release_dc,
+                w32.fill_rect,
+                w32.create_solid_brush,
+                w32.delete_object,
+            ) {
+                let mut client_rc = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                if get_cr(hwnd, &mut client_rc) != 0 {
+                    let mut hdr_h = 0i32;
+                    let hdr_raw = send_msg(hwnd, LVM_GETHEADER, 0, 0);
+                    if hdr_raw != 0 {
+                        let mut hrc = RECT {
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                        };
+                        if get_cr(hdr_raw as HWND, &mut hrc) != 0 {
+                            hdr_h = (hrc.bottom - hrc.top).max(0);
+                        }
+                    }
+
+                    let count = send_msg(hwnd, LVM_GETITEMCOUNT, 0, 0) as i32;
+                    let mut empty_top = hdr_h;
+                    let mut max_right = 0i32;
+                    if count > 0 {
+                        // LVIR_BOUNDS == 0 -> left == 0 on entry
+                        let mut last_rc = RECT {
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                        };
+                        if send_msg(
+                            hwnd,
+                            LVM_GETITEMRECT,
+                            (count - 1) as usize,
+                            (&mut last_rc as *mut RECT) as isize,
+                        ) != 0
+                        {
+                            empty_top = last_rc.bottom.max(hdr_h);
+                            max_right = last_rc.right;
+                        }
+                    }
+
+                    let need_bottom = empty_top < client_rc.bottom;
+                    let need_right =
+                        count > 0 && max_right > 0 && max_right < client_rc.right && empty_top > hdr_h;
+                    if need_bottom || need_right {
+                        let hdc = get_dc(hwnd);
+                        if !hdc.is_null() {
+                            let bg_cr = resolve_listview_bg_cr(w32, hwnd);
+                            let br = mk_br(bg_cr);
+                            if !br.is_null() {
+                                if need_bottom {
+                                    let fill_rc = RECT {
+                                        left: client_rc.left,
+                                        top: empty_top,
+                                        right: client_rc.right,
+                                        bottom: client_rc.bottom,
+                                    };
+                                    fill_rect(hdc, &fill_rc, br);
+                                }
+                                if need_right {
+                                    let right_rc = RECT {
+                                        left: max_right,
+                                        top: hdr_h,
+                                        right: client_rc.right,
+                                        bottom: empty_top,
+                                    };
+                                    fill_rect(hdc, &right_rc, br);
+                                }
+                                del_obj(br);
+                            }
+                            rel_dc(hwnd, hdc);
+                        }
+                    }
+                }
+            }
+
+            res
+        }
+        WM_NCDESTROY => {
+            if let Some(rm) = w32.remove_window_subclass {
+                rm(hwnd, listview_subclass_proc, u_id_subclass);
+            }
+            if let Some(def_proc) = w32.def_subclass_proc {
+                def_proc(hwnd, u_msg, w_param, l_param)
+            } else {
+                0
+            }
+        }
+        _ => {
+            if let Some(def_proc) = w32.def_subclass_proc {
+                def_proc(hwnd, u_msg, w_param, l_param)
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// Applies DarkMode_Explorer scrollbar theming on a ListView, subclasses SysListView32
+/// to suppress empty-area column gridlines, and subclasses its child SysHeader32 so
+/// trailing header space never flashes white on Windows 10/11.
 pub fn style_listview(hwnd_val: usize, header_bg_rgb: u32, accent_rgb: u32) -> bool {
     if hwnd_val == 0 {
         return false;
@@ -536,12 +721,23 @@ pub fn style_listview(hwnd_val: usize, header_bg_rgb: u32, accent_rgb: u32) -> b
     let accent_cr = packed_rgb_to_colorref(accent_rgb);
 
     unsafe {
+        if let (Some(get_wl), Some(set_wl)) = (w32.get_window_long, w32.set_window_long) {
+            let style = get_wl(lv_hwnd, GWL_STYLE);
+            if (style & WS_CLIPCHILDREN) == 0 {
+                let _ = set_wl(lv_hwnd, GWL_STYLE, style | WS_CLIPCHILDREN);
+            }
+        }
+
         if let Some(set_theme) = w32.set_window_theme {
             // "DarkMode_Explorer" UTF-16 null-terminated
             const DARK_EXPLORER: &[u16] = &[
                 68, 97, 114, 107, 77, 111, 100, 101, 95, 69, 120, 112, 108, 111, 114, 101, 114, 0,
             ];
             let _ = set_theme(lv_hwnd, DARK_EXPLORER.as_ptr(), std::ptr::null());
+        }
+
+        if let Some(subclass) = w32.set_window_subclass {
+            let _ = subclass(lv_hwnd, listview_subclass_proc, LISTVIEW_SUBCLASS_ID, 0);
         }
 
         if let Some(send_msg) = w32.send_message {

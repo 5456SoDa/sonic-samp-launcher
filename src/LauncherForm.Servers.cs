@@ -577,7 +577,7 @@ internal partial class LauncherForm
 			? new Rectangle(e.Bounds.X, e.Bounds.Y, Math.Min(e.Bounds.Width, lstSrv.Columns[0].Width), e.Bounds.Height)
 			: e.Bounds;
 		graphics.FillRectangle(brCard, cellBounds);
-		bool flag = (e.ItemState & ListViewItemStates.Selected) != 0 || (e.Item != null && e.Item.Selected);
+		bool flag = e.Item != null && e.Item.Selected;
 		if (flag && e.Item != null)
 		{
 			Region oldClip = graphics.Clip;
@@ -735,7 +735,7 @@ internal partial class LauncherForm
 			? new Rectangle(e.Bounds.X, e.Bounds.Y, Math.Min(e.Bounds.Width, lvDetList.Columns[0].Width), e.Bounds.Height)
 			: e.Bounds;
 		Color bg = ((e.ItemIndex % 2 == 1) ? Color.FromArgb(19, 27, 43) : colField);
-		if ((e.ItemState & ListViewItemStates.Selected) != 0 || (e.Item != null && e.Item.Selected))
+		if (e.Item != null && e.Item.Selected)
 		{
 			bg = Color.FromArgb(28, 44, 72);
 		}
@@ -1079,7 +1079,7 @@ internal partial class LauncherForm
 				btnDetFav.BorderColor = Color.FromArgb(35, 52, 80);
 			}
 			StopActiveSpark();
-			if (detSpark != null) detSpark.ClearData();
+			if (detSpark != null) detSpark.ClearData(true);
 			PopulateDetList();
 			return;
 		}
@@ -1185,6 +1185,24 @@ internal partial class LauncherForm
 		return raw;
 	}
 
+	private string FormatDetPlayersEmptyMessage()
+	{
+		ServerEntry se = (lstSrv != null && lstSrv.SelectedItems.Count > 0) ? (lstSrv.SelectedItems[0].Tag as ServerEntry) : null;
+		if (se != null && se.Ping >= 0)
+		{
+			if (se.Players > 100)
+			{
+				return "เซิร์ฟเวอร์มีผู้เล่นเกิน 100 คน (SA-MP จำกัดการดึงรายชื่ออัตโนมัติ)";
+			}
+			if (se.Players == 0)
+			{
+				return "ยังไม่มีผู้เล่นออนไลน์ในขณะนี้ (0 คน)";
+			}
+			return "เซิร์ฟเวอร์นี้ปิดการแสดงรายชื่อผู้เล่น (ซ่อน Query)";
+		}
+		return "ไม่สามารถโหลดรายชื่อผู้เล่น (เซิร์ฟเวอร์ออฟไลน์)";
+	}
+
 	private void PopulateDetList()
 	{
 		if (lvDetList == null) return;
@@ -1235,7 +1253,7 @@ internal partial class LauncherForm
 				lvDetList.EndUpdate();
 				if (lblDetEmpty != null)
 				{
-					lblDetEmpty.Text = "ไม่สามารถโหลดรายชื่อผู้เล่น (ออฟไลน์หรือปิด Query)";
+					lblDetEmpty.Text = FormatDetPlayersEmptyMessage();
 					lblDetEmpty.Visible = true;
 				}
 				return;
@@ -1270,7 +1288,10 @@ internal partial class LauncherForm
 			if (lblDetEmpty != null)
 			{
 				lblDetEmpty.Visible = (lvDetList.Items.Count == 0);
-				lblDetEmpty.Text = "ไม่มีผู้เล่นออนไลน์ขณะนี้ หรือเซิร์ฟเวอร์ซ่อนรายชื่อ";
+				if (lblDetEmpty.Visible)
+				{
+					lblDetEmpty.Text = FormatDetPlayersEmptyMessage();
+				}
 			}
 		}
 		else
@@ -1573,6 +1594,10 @@ internal partial class LauncherForm
 		else
 		{
 			StopPubAuto();
+			if (!querying && !fetchingPub)
+			{
+				SetStatus("รายการเซิร์ฟเวอร์ของฉัน (" + lstSrv.Items.Count + " เซิร์ฟเวอร์)");
+			}
 		}
 	}
 

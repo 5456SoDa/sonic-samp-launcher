@@ -15,6 +15,7 @@ internal class SparklineGraph : Control
 	public Color WarnColor = Color.FromArgb(255, 235, 0);
 	public Color ErrColor = Color.FromArgb(255, 85, 105);
 	public bool CompactMode = false;
+	public bool IdleMode = false;
 
 	public SparklineGraph()
 	{
@@ -33,12 +34,19 @@ internal class SparklineGraph : Control
 
 	public void UpdateData(PingSparkReport rep)
 	{
+		IdleMode = false;
 		report = rep;
 		Invalidate();
 	}
 
 	public void ClearData()
 	{
+		ClearData(false);
+	}
+
+	public void ClearData(bool idle)
+	{
+		IdleMode = idle;
 		report = null;
 		Invalidate();
 	}
@@ -85,7 +93,9 @@ internal class SparklineGraph : Control
 
 		if (report == null || report.History == null || report.History.Count == 0)
 		{
-			string waitTxt = CompactMode ? "กำลังวัดคลื่นปิง..." : "กำลังเก็บสถิติคลื่นปิง (1.5 วิ)...";
+			string waitTxt = IdleMode
+				? "คลิกเลือกเซิร์ฟเวอร์เพื่อวัดคลื่นปิงแบบสด"
+				: (CompactMode ? "กำลังวัดคลื่นปิง..." : "กำลังเก็บสถิติคลื่นปิง (1.5 วิ)...");
 			TextRenderer.DrawText(g, waitTxt, fSmall, box, Color.FromArgb(130, 155, 185),
 				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 			return;

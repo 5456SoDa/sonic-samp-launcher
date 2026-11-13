@@ -75,7 +75,7 @@ fn read_ini_borderless() -> bool {
         if let Some(eq) = line.find('=') {
             let k = line[..eq].trim().to_ascii_lowercase();
             let v = line[eq + 1..].trim();
-            if k == "enabled" {
+            if k == "enable" || k == "enabled" {
                 enabled = v == "1" || v.eq_ignore_ascii_case("true");
             } else if k == "borderless" {
                 borderless = v == "1" || v.eq_ignore_ascii_case("true");

@@ -70,6 +70,8 @@ internal class AssetScanReport
 	public int DffCount;
 	public int TxdCount;
 	public int ImgCount;
+	public int ColCount;
+	public int IfpCount;
 	public int TextureCount;
 	public int ErrorCount;
 	public int WarnCount;
@@ -83,6 +85,7 @@ internal class ModLoaderFolder
 	public bool Enabled = true;
 	public int FileCount;
 	public long TotalBytes;
+	public int Priority = 50;
 }
 
 internal class ModLoaderState
@@ -191,6 +194,12 @@ internal interface ICore
 	ModLoaderState GetModLoaderState(string gameDir);
 
 	string SaveModLoaderState(string gameDir, bool ignoreAll, List<string> disabledFolders);
+
+	string SetModLoaderPriority(string gameDir, string folderName, int priority);
+
+	string ApplySkyGfx(string gameDir, string preset);
+
+	string ApplyFpsLimit(string gameDir, int fps);
 
 	GuardRuntimeStatus GetGuardStatus(string gameDir);
 

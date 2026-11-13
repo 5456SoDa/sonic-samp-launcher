@@ -93,6 +93,15 @@ internal class RustCore : ICore
 	private static extern IntPtr core_modloader_save(byte[] gameDir, [MarshalAs(UnmanagedType.U1)] bool ignoreAll, byte[] disabledJson);
 
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_modloader_set_priority(byte[] gameDir, byte[] folderName, uint priority);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_gfx_apply_skygfx(byte[] gameDir, byte[] preset);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_gfx_apply_fps(byte[] gameDir, uint fps);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	private static extern IntPtr core_guard_status(byte[] gameDir);
 
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -550,12 +559,18 @@ internal class RustCore : ICore
 			return "ดำเนินการเสร็จสิ้น";
 		}
 		int ro = GetInt(data, "fixed_readonly", 0);
+		bool laa = GetBool(data, "laa_enabled");
+		int optCfg = GetInt(data, "optimized_configs", 0);
+		int cleanedLogs = GetInt(data, "cleaned_logs", 0);
 		List<string> dis = GetStrList(data, "disabled_duplicates");
 		List<string> rem = GetStrList(data, "remaining_warnings");
 		StringBuilder sb = new StringBuilder();
 		sb.AppendLine("ซ่อมแซมอัตโนมัติเรียบร้อย:");
 		sb.AppendLine("• ปลดล็อกไฟล์ Read-Only: " + ro + " ไฟล์");
 		sb.AppendLine("• ปิด .asi ที่ซ้ำซ้อน (.disabled): " + dis.Count + " ไฟล์");
+		sb.AppendLine("• เปิดใช้งาน 4GB Large Address Aware: " + (laa ? "เปิดแล้ว" : "เปิดอยู่แล้ว / ข้าม"));
+		sb.AppendLine("• ปรับจูนไฟล์ตั้งค่ากราฟิก/หน่วยความจำ/FPS: " + optCfg + " ไฟล์");
+		sb.AppendLine("• ล้างไฟล์ Log/Backup เก่าที่สะสม: " + cleanedLogs + " ไฟล์");
 		if (rem.Count > 0)
 		{
 			sb.AppendLine();
@@ -699,6 +714,8 @@ internal class RustCore : ICore
 		report.ScannedFiles = GetInt(d, "scanned_files", 0);
 		report.DffCount = GetInt(d, "dff_count", 0);
 		report.TxdCount = GetInt(d, "txd_count", 0);
+		report.ColCount = GetInt(d, "col_count", 0);
+		report.IfpCount = GetInt(d, "ifp_count", 0);
 		report.ImgCount = GetInt(d, "img_count", 0);
 		report.TextureCount = GetInt(d, "texture_count", 0);
 		report.ErrorCount = GetInt(d, "error_count", 0);
@@ -764,6 +781,7 @@ internal class RustCore : ICore
 						folder.Enabled = GetBool(fd, "enabled");
 						folder.FileCount = GetInt(fd, "file_count", 0);
 						folder.TotalBytes = GetLong(fd, "total_bytes", 0);
+						folder.Priority = GetInt(fd, "priority", 50);
 						state.Folders.Add(folder);
 					}
 				}
@@ -779,6 +797,46 @@ internal class RustCore : ICore
 		IntPtr ptr = core_modloader_save(ToUtf8(gameDir), ignoreAll, ToUtf8(disJson));
 		string err = TakeOwnedStr(ptr);
 		return err;
+	}
+
+	public string SetModLoaderPriority(string gameDir, string folderName, int priority)
+	{
+		uint prio = (uint)Math.Max(1, Math.Min(100, priority));
+		IntPtr ptr = core_modloader_set_priority(ToUtf8(gameDir), ToUtf8(folderName ?? ""), prio);
+		return TakeOwnedStr(ptr);
+	}
+
+	public string ApplySkyGfx(string gameDir, string preset)
+	{
+		string json = TakeOwnedStr(core_gfx_apply_skygfx(ToUtf8(gameDir), ToUtf8(preset ?? "")));
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			throw new Exception("เกิดข้อผิดพลาดจาก samp_core.dll");
+		}
+		if (!GetBool(d, "ok"))
+		{
+			string err = GetStr(d, "error");
+			throw new Exception(string.IsNullOrEmpty(err) ? "สลับโทนภาพไม่สำเร็จ" : err);
+		}
+		return GetStr(d, "data");
+	}
+
+	public string ApplyFpsLimit(string gameDir, int fps)
+	{
+		uint clamped = (uint)Math.Max(0, fps);
+		string json = TakeOwnedStr(core_gfx_apply_fps(ToUtf8(gameDir), clamped));
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			throw new Exception("เกิดข้อผิดพลาดจาก samp_core.dll");
+		}
+		if (!GetBool(d, "ok"))
+		{
+			string err = GetStr(d, "error");
+			throw new Exception(string.IsNullOrEmpty(err) ? "ตั้งค่า FPS ไม่สำเร็จ" : err);
+		}
+		return GetStr(d, "data");
 	}
 
 	public GuardRuntimeStatus GetGuardStatus(string gameDir)

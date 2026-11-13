@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -9,6 +9,7 @@ pub struct ModLoaderFolder {
     pub enabled: bool,
     pub file_count: usize,
     pub total_bytes: u64,
+    pub priority: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,7 +87,7 @@ fn strip_comment(line: &str) -> &str {
     }
 }
 
-fn parse_ini_state(content: &str) -> (String, bool, HashSet<String>) {
+fn parse_ini_state(content: &str) -> (String, bool, HashSet<String>, HashMap<String, u32>) {
     let mut profile = "Default".to_string();
     let mut cur_sec = String::new();
 
@@ -110,8 +111,10 @@ fn parse_ini_state(content: &str) -> (String, bool, HashSet<String>) {
 
     let cfg_sec = format!("Profiles.{}.Config", profile);
     let ign_sec = format!("Profiles.{}.IgnoreMods", profile);
+    let prio_sec = format!("Profiles.{}.Priority", profile);
     let mut ignore_all = false;
     let mut ignored = HashSet::new();
+    let mut priorities = HashMap::new();
     cur_sec.clear();
 
     for raw in content.lines() {
@@ -133,10 +136,19 @@ fn parse_ini_state(content: &str) -> (String, bool, HashSet<String>) {
             }
         } else if cur_sec.eq_ignore_ascii_case(&ign_sec) {
             ignored.insert(clean.to_ascii_lowercase());
+        } else if cur_sec.eq_ignore_ascii_case(&prio_sec) {
+            if let Some(eq) = clean.find('=') {
+                let k = clean[..eq].trim().to_ascii_lowercase();
+                if let Ok(p) = clean[eq + 1..].trim().parse::<u32>() {
+                    if !k.is_empty() {
+                        priorities.insert(k, p.clamp(1, 100));
+                    }
+                }
+            }
         }
     }
 
-    (profile, ignore_all, ignored)
+    (profile, ignore_all, ignored, priorities)
 }
 
 pub fn list_modloader_state(game_dir: &Path) -> Result<ModLoaderState, String> {
@@ -151,7 +163,7 @@ pub fn list_modloader_state(game_dir: &Path) -> Result<ModLoaderState, String> {
     }
 
     let ini_text = read_ini_source(game_dir);
-    let (profile, ignore_all, ignored) = parse_ini_state(&ini_text);
+    let (profile, ignore_all, ignored, priorities) = parse_ini_state(&ini_text);
 
     let mut folders = Vec::new();
     let rd = fs::read_dir(&mod_dir).map_err(|e| format!("อ่าน modloader ไม่สำเร็จ: {}", e))?;
@@ -171,12 +183,15 @@ pub fn list_modloader_state(game_dir: &Path) -> Result<ModLoaderState, String> {
         let mut fc = 0usize;
         let mut tb = 0u64;
         count_dir_stats(&p, 6, &mut fc, &mut tb);
-        let enabled = !ignored.contains(&name.to_ascii_lowercase());
+        let key = name.to_ascii_lowercase();
+        let enabled = !ignored.contains(&key);
+        let priority = priorities.get(&key).copied().unwrap_or(50);
         folders.push(ModLoaderFolder {
             name,
             enabled,
             file_count: fc,
             total_bytes: tb,
+            priority,
         });
     }
     folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -187,6 +202,69 @@ pub fn list_modloader_state(game_dir: &Path) -> Result<ModLoaderState, String> {
         ignore_all,
         folders,
     })
+}
+
+pub fn set_folder_priority(game_dir: &Path, folder_name: &str, priority: u32) -> Result<(), String> {
+    let mod_dir = game_dir.join("modloader");
+    if !mod_dir.is_dir() {
+        return Err("ไม่พบโฟลเดอร์ modloader ในโฟลเดอร์เกม".into());
+    }
+    let clean_name = folder_name.trim();
+    if clean_name.is_empty() {
+        return Err("ไม่ได้ระบุชื่อโฟลเดอร์ม็อด".into());
+    }
+    let prio = priority.clamp(1, 100);
+
+    let raw = read_ini_source(game_dir);
+    let (profile, _, _, _) = parse_ini_state(&raw);
+    let prio_sec = format!("Profiles.{}.Priority", profile);
+
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut cur_sec = String::new();
+    let mut has_prio_sec = false;
+    let mut wrote_entry = false;
+
+    for orig in raw.lines() {
+        let clean = strip_comment(orig);
+        if clean.starts_with('[') && clean.ends_with(']') && clean.len() >= 2 {
+            if cur_sec.eq_ignore_ascii_case(&prio_sec) && !wrote_entry {
+                out_lines.push(format!("{} = {}", clean_name, prio));
+                wrote_entry = true;
+            }
+            cur_sec = clean[1..clean.len() - 1].trim().to_string();
+            if cur_sec.eq_ignore_ascii_case(&prio_sec) {
+                has_prio_sec = true;
+            }
+            out_lines.push(orig.to_string());
+            continue;
+        }
+        if cur_sec.eq_ignore_ascii_case(&prio_sec) {
+            if let Some(eq) = clean.find('=') {
+                if clean[..eq].trim().eq_ignore_ascii_case(clean_name) {
+                    out_lines.push(format!("{} = {}", clean_name, prio));
+                    wrote_entry = true;
+                    continue;
+                }
+            }
+        }
+        out_lines.push(orig.to_string());
+    }
+
+    if cur_sec.eq_ignore_ascii_case(&prio_sec) && !wrote_entry {
+        out_lines.push(format!("{} = {}", clean_name, prio));
+        wrote_entry = true;
+    }
+    if !has_prio_sec || !wrote_entry {
+        out_lines.push(String::new());
+        out_lines.push(format!("[{}]", prio_sec));
+        out_lines.push(format!("{} = {}", clean_name, prio));
+    }
+
+    let ini_path = mod_dir.join("modloader.ini");
+    let final_text = out_lines.join("\r\n") + "\r\n";
+    fs::write(&ini_path, final_text)
+        .map_err(|e| format!("บันทึก priority ใน modloader.ini ไม่สำเร็จ: {}", e))?;
+    Ok(())
 }
 
 pub fn save_modloader_state(
@@ -200,7 +278,7 @@ pub fn save_modloader_state(
     }
 
     let raw = read_ini_source(game_dir);
-    let (profile, _, _) = parse_ini_state(&raw);
+    let (profile, _, _, _) = parse_ini_state(&raw);
     let cfg_sec = format!("Profiles.{}.Config", profile);
     let ign_sec = format!("Profiles.{}.IgnoreMods", profile);
 
@@ -319,6 +397,12 @@ mod tests {
         assert!(!veh.enabled);
         assert!(maps.enabled);
         assert_eq!(veh.file_count, 1);
+        assert_eq!(veh.priority, 50);
+
+        set_folder_priority(&dir, "Vehicles", 85).unwrap();
+        let s2 = list_modloader_state(&dir).unwrap();
+        let veh2 = s2.folders.iter().find(|f| f.name == "Vehicles").unwrap();
+        assert_eq!(veh2.priority, 85);
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -443,41 +443,13 @@ internal partial class LauncherForm
 	private void ApplySkyGfxPreset(string mode)
 	{
 		string g = GetGameDir();
-		string target = Path.Combine(g, "skygfx.ini");
 		try
 		{
-			if (mode == "off")
-			{
-				if (File.Exists(target))
-				{
-					File.Delete(target);
-					ToastOk("ปิดใช้งาน SkyGfx แล้ว");
-				}
-				else
-				{
-					Toast("SkyGfx ปิดใช้งานอยู่แล้ว");
-				}
-			}
-			else
-			{
-				string srcName = (mode == "ps2") ? "skygfx1.ini" : ((mode == "pc") ? "skygfx2.ini" : ((mode == "mobile") ? "skygfx3.ini" : null));
-				string label = (mode == "ps2") ? "PS2 Classic" : ((mode == "pc") ? "PC Enhanced" : "Mobile");
-				if (srcName == null)
-				{
-					return;
-				}
-				string src = Path.Combine(g, srcName);
-				if (!File.Exists(src))
-				{
-					ShowErr("ไม่พบไฟล์ " + srcName + " ในโฟลเดอร์เกม:\r\n" + g);
-					return;
-				}
-				File.Copy(src, target, true);
-				ToastOk("สลับโทนภาพเป็น " + label + " เรียบร้อย");
-			}
+			string msg = core.ApplySkyGfx(g, mode);
 			activeSkyGfx = mode;
 			UpdateSkyGfxButtons();
 			SaveConfig();
+			ToastOk(msg);
 		}
 		catch (Exception ex)
 		{
@@ -516,78 +488,16 @@ internal partial class LauncherForm
 		btnSgOff.BorderColor = (activeSkyGfx == "off") ? activeBorder : normalBorder;
 	}
 
-	private static void UpdateIniKeys(string path, Dictionary<string, string> updates, bool spacedEquals)
-	{
-		List<string> lines = new List<string>(File.ReadAllLines(path, Encoding.UTF8));
-		HashSet<string> applied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		for (int i = 0; i < lines.Count; i++)
-		{
-			string trimmed = lines[i].Trim();
-			if (trimmed.Length == 0 || trimmed.StartsWith(";") || trimmed.StartsWith("#") || trimmed.StartsWith("["))
-			{
-				continue;
-			}
-			int eq = lines[i].IndexOf('=');
-			if (eq <= 0)
-			{
-				continue;
-			}
-			string key = lines[i].Substring(0, eq).Trim();
-			string newVal;
-			if (updates.TryGetValue(key, out newVal))
-			{
-				lines[i] = key + (spacedEquals ? " = " : "=") + newVal;
-				applied.Add(key);
-			}
-		}
-		foreach (KeyValuePair<string, string> kv in updates)
-		{
-			if (!applied.Contains(kv.Key))
-			{
-				lines.Add(kv.Key + (spacedEquals ? " = " : "=") + kv.Value);
-			}
-		}
-		File.WriteAllLines(path, lines.ToArray(), new UTF8Encoding(false));
-	}
-
 	private void ApplyFpsLimit(int fps)
 	{
 		string gameDir = GetGameDir();
-		string fpsUnlockPath = Path.Combine(gameDir, "scripts", "FPSUnlock.ini");
-		string fvPath = Path.Combine(gameDir, "scripts", "FramerateVigilante.ini");
-		bool hasUnlock = File.Exists(fpsUnlockPath);
-		bool hasFv = File.Exists(fvPath);
-		if (!hasUnlock && !hasFv)
-		{
-			ShowErr("ไม่พบไฟล์ตั้งค่า FPS ในโฟลเดอร์ scripts\r\n(scripts\\FPSUnlock.ini หรือ scripts\\FramerateVigilante.ini)");
-			return;
-		}
 		try
 		{
-			if (hasUnlock)
-			{
-				Dictionary<string, string> u1 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-				u1["UnlockFPS"] = "true";
-				u1["CustomFPS"] = fps.ToString();
-				UpdateIniKeys(fpsUnlockPath, u1, true);
-			}
-			if (hasFv)
-			{
-				Dictionary<string, string> u2 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-				u2["FPSlimit"] = fps.ToString();
-				UpdateIniKeys(fvPath, u2, false);
-			}
+			string msg = core.ApplyFpsLimit(gameDir, fps);
 			activeFpsLimit = fps;
 			UpdateFpsButtons();
 			SaveConfig();
-			if (fps == 0)
-			{
-				ToastOk("ตั้งค่า FPS เป็น ปลดล็อกเต็มที่ (Unlimited)");
-			}
-			else
-			{
-				ToastOk("ตั้งค่า FPS Limit เป็น " + fps + " FPS เรียบร้อย");
-			}
+			ToastOk(msg);
 		}
 		catch (Exception ex)
 		{

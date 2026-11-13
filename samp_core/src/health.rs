@@ -1,8 +1,8 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,6 +29,9 @@ pub struct AutoFixResult {
     pub fixed_readonly: usize,
     pub disabled_duplicates: Vec<String>,
     pub remaining_warnings: Vec<String>,
+    pub laa_enabled: bool,
+    pub optimized_configs: usize,
+    pub cleaned_logs: usize,
 }
 
 pub fn sha256_bytes(data: &[u8]) -> String {
@@ -185,9 +188,17 @@ pub fn check_health(game_dir: &Path, skygfx_preset: &str) -> HealthReport {
             .unwrap_or(false);
         if hash_ok || len == 14_383_616 || len == 14_083_072 {
             let tag = if hash_ok { "SHA-256 ✓" } else { "1.0 US" };
+            let laa_suffix = match check_pe_laa(&gta_exe) {
+                Some(true) => " • 4GB LAA ✓",
+                Some(false) => " (ยังไม่เปิด 4GB LAA)",
+                None => "",
+            };
             (
                 "ok".into(),
-                format!("✓ gta_sa.exe 1.0 US ({}) + gta3.img สมบูรณ์", tag),
+                format!(
+                    "✓ gta_sa.exe 1.0 US ({}) + gta3.img สมบูรณ์{}",
+                    tag, laa_suffix
+                ),
             )
         } else {
             (
@@ -279,14 +290,19 @@ pub fn check_health(game_dir: &Path, skygfx_preset: &str) -> HealthReport {
     };
 
     // 4. SkyGfx & overall status
-    let has_sg = game_dir.join("skygfx.ini").exists() || game_dir.join("skygfx1.ini").exists();
-    let fixable_count = duplicate_asis.len() + readonly_files.len();
+    let sky_active = game_dir.join("skygfx.ini").exists()
+        && (game_dir.join("skygfx.asi").exists()
+            || game_dir.join("scripts").join("skygfx.asi").exists()
+            || (!game_dir.join("skygfx.asi.disabled").exists()
+                && !game_dir.join("scripts").join("skygfx.asi.disabled").exists()));
+    let needs_laa = matches!(check_pe_laa(&gta_exe), Some(false));
+    let fixable_count = duplicate_asis.len() + readonly_files.len() + usize::from(needs_laa);
     let (gfx_status, gfx_msg) = if fixable_count > 0 {
         (
             "warn".into(),
             format!("⚡ พบปัญหาที่ซ่อมอัตโนมัติได้ {} รายการ กดปุ่ม 'แก้ไขอัตโนมัติ'", fixable_count),
         )
-    } else if has_sg {
+    } else if sky_active {
         (
             "ok".into(),
             format!("✓ SkyGfx ทำงาน (พรีเซ็ต: {})", skygfx_preset.to_uppercase()),
@@ -312,6 +328,392 @@ pub fn check_health(game_dir: &Path, skygfx_preset: &str) -> HealthReport {
         missing_dx9,
         fixable_count,
     }
+}
+
+const IMAGE_FILE_LARGE_ADDRESS_AWARE: u16 = 0x0020;
+
+/// Inspects a PE binary's COFF Characteristics for IMAGE_FILE_LARGE_ADDRESS_AWARE.
+/// Returns `None` if the file does not exist or is not a valid PE header.
+pub fn check_pe_laa(exe_path: &Path) -> Option<bool> {
+    let mut f = File::open(exe_path).ok()?;
+    let mut hdr = [0u8; 4096];
+    let n = f.read(&mut hdr).ok()?;
+    if n < 0x40 || &hdr[0..2] != b"MZ" {
+        return None;
+    }
+    let e_lfanew = u32::from_le_bytes([hdr[0x3C], hdr[0x3D], hdr[0x3E], hdr[0x3F]]) as usize;
+    if e_lfanew + 24 > n || &hdr[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
+        return None;
+    }
+    let chars = u16::from_le_bytes([hdr[e_lfanew + 22], hdr[e_lfanew + 23]]);
+    Some((chars & IMAGE_FILE_LARGE_ADDRESS_AWARE) != 0)
+}
+
+/// Sets the IMAGE_FILE_LARGE_ADDRESS_AWARE (4GB virtual memory) bit on a 32-bit PE header.
+/// Returns `Ok(true)` if modified, `Ok(false)` if already enabled or not a PE file.
+pub fn enable_pe_laa(exe_path: &Path) -> Result<bool, String> {
+    let Some(enabled) = check_pe_laa(exe_path) else {
+        return Ok(false);
+    };
+    if enabled {
+        return Ok(false);
+    }
+    if let Ok(meta) = fs::metadata(exe_path) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(exe_path, perms);
+        }
+    }
+    let mut f = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(exe_path)
+        .map_err(|e| format!("ไม่สามารถเปิด {} เพื่อเปิด 4GB LAA: {}", exe_path.display(), e))?;
+    let mut dos = [0u8; 64];
+    f.read_exact(&mut dos)
+        .map_err(|e| format!("อ่าน DOS header ล้มเหลว: {}", e))?;
+    let e_lfanew = u32::from_le_bytes([dos[0x3C], dos[0x3D], dos[0x3E], dos[0x3F]]) as u64;
+    f.seek(SeekFrom::Start(e_lfanew + 22))
+        .map_err(|e| format!("Seek PE Characteristics ล้มเหลว: {}", e))?;
+    let mut cbuf = [0u8; 2];
+    f.read_exact(&mut cbuf)
+        .map_err(|e| format!("อ่าน PE Characteristics ล้มเหลว: {}", e))?;
+    let updated = u16::from_le_bytes(cbuf) | IMAGE_FILE_LARGE_ADDRESS_AWARE;
+    f.seek(SeekFrom::Start(e_lfanew + 22))
+        .map_err(|e| format!("Seek PE write ล้มเหลว: {}", e))?;
+    f.write_all(&updated.to_le_bytes())
+        .map_err(|e| format!("บันทึก PE Characteristics ล้มเหลว: {}", e))?;
+    Ok(true)
+}
+
+/// Updates INI keys case-insensitively while preserving sections, blank lines, and comments.
+fn update_ini_keys(path: &Path, updates: &[(&str, &str)], spaced_equals: bool) -> Result<bool, String> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    if let Ok(meta) = fs::metadata(path) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(path, perms);
+        }
+    }
+    let raw = fs::read_to_string(path).map_err(|e| format!("อ่าน {} ล้มเหลว: {}", path.display(), e))?;
+    let line_sep = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut applied: HashSet<String> = HashSet::new();
+    let mut changed = false;
+
+    for orig in raw.lines() {
+        let trimmed = orig.trim();
+        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') || trimmed.starts_with('[') {
+            out_lines.push(orig.to_string());
+            continue;
+        }
+        if let Some(eq_idx) = orig.find('=') {
+            let key_raw = orig[..eq_idx].trim();
+            if let Some((_, new_val)) = updates.iter().find(|(k, _)| k.eq_ignore_ascii_case(key_raw)) {
+                let after_eq = &orig[eq_idx + 1..];
+                let comment_suffix = after_eq.find(';').map(|ci| format!("  {}", after_eq[ci..].trim())).unwrap_or_default();
+                let sep = if spaced_equals { " = " } else { "=" };
+                let replacement = format!("{}{}{}{}", key_raw, sep, new_val, comment_suffix);
+                if replacement != orig {
+                    changed = true;
+                }
+                out_lines.push(replacement);
+                applied.insert(key_raw.to_ascii_lowercase());
+                continue;
+            }
+        }
+        out_lines.push(orig.to_string());
+    }
+
+    for (k, v) in updates {
+        if !applied.contains(&k.to_ascii_lowercase()) {
+            let sep = if spaced_equals { " = " } else { "=" };
+            out_lines.push(format!("{}{}{}", k, sep, v));
+            changed = true;
+        }
+    }
+
+    if changed {
+        let body = format!("{}{}", out_lines.join(line_sep), line_sep);
+        fs::write(path, body).map_err(|e| format!("เขียน {} ล้มเหลว: {}", path.display(), e))?;
+    }
+    Ok(changed)
+}
+
+fn sanitize_stream_ini(path: &Path) -> Result<bool, String> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let raw = fs::read_to_string(path).map_err(|e| format!("อ่าน stream.ini ล้มเหลว: {}", e))?;
+    let line_sep = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut out: Vec<String> = Vec::new();
+    let mut changed = false;
+    let mut saw_mem = false;
+    let mut saw_dev = false;
+
+    for orig in raw.lines() {
+        let mut parts = orig.split_whitespace();
+        if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+            if k.eq_ignore_ascii_case("memory") {
+                saw_mem = true;
+                if v != "1048576" {
+                    out.push("memory\t\t1048576".to_string());
+                    changed = true;
+                    continue;
+                }
+            } else if k.eq_ignore_ascii_case("devkit_memory") {
+                saw_dev = true;
+                if v != "1048576" {
+                    out.push("devkit_memory\t1048576".to_string());
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+        out.push(orig.to_string());
+    }
+    if !saw_mem {
+        out.push("memory\t\t1048576".to_string());
+        changed = true;
+    }
+    if !saw_dev {
+        out.push("devkit_memory\t1048576".to_string());
+        changed = true;
+    }
+    if changed {
+        let body = format!("{}{}", out.join(line_sep), line_sep);
+        fs::write(path, body).map_err(|e| format!("เขียน stream.ini ล้มเหลว: {}", e))?;
+    }
+    Ok(changed)
+}
+
+fn toggle_skygfx_asi(game_dir: &Path, enable: bool) -> Result<(), String> {
+    let candidates = [
+        (game_dir.join("skygfx.asi"), game_dir.join("skygfx.asi.disabled")),
+        (
+            game_dir.join("scripts").join("skygfx.asi"),
+            game_dir.join("scripts").join("skygfx.asi.disabled"),
+        ),
+    ];
+    for (asi, dis) in candidates {
+        if enable {
+            if !asi.exists() && dis.exists() {
+                fs::rename(&dis, &asi)
+                    .map_err(|e| format!("ไม่สามารถเปิด {}: {}", asi.display(), e))?;
+            }
+        } else if asi.exists() {
+            if dis.exists() {
+                let _ = fs::remove_file(&dis);
+            }
+            fs::rename(&asi, &dis)
+                .map_err(|e| format!("ไม่สามารถปิด {}: {}", asi.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
+fn sanitize_skygfx_templates(game_dir: &Path) -> Result<usize, String> {
+    let mut fixed = 0usize;
+    let has_texdb = game_dir.join("models").join("texdb").is_dir();
+
+    let sg1 = game_dir.join("skygfx1.ini");
+    if sg1.exists()
+        && update_ini_keys(&sg1, &[("keySwitch", "0"), ("colorFilter", "PS2")], false)?
+    {
+        fixed += 1;
+    }
+    let sg2 = game_dir.join("skygfx2.ini");
+    if sg2.exists() && update_ini_keys(&sg2, &[("keySwitch", "0")], false)? {
+        fixed += 1;
+    }
+    let sg3 = game_dir.join("skygfx3.ini");
+    if sg3.exists() {
+        let mut updates = vec![("keySwitch", "0")];
+        if !has_texdb {
+            updates.push(("detailMaps", "0"));
+        }
+        if update_ini_keys(&sg3, &updates, false)? {
+            fixed += 1;
+        }
+    }
+    Ok(fixed)
+}
+
+/// Applies SkyGfx graphics preset cleanly, including toggling skygfx.asi when turning Off
+/// and sanitizing colorFilter/detailMaps/keySwitch to prevent visual glitches and F10 conflicts.
+pub fn apply_skygfx_preset(game_dir: &Path, preset: &str) -> Result<String, String> {
+    let mode = preset.trim().to_ascii_lowercase();
+    let target = game_dir.join("skygfx.ini");
+
+    if mode == "off" {
+        let had_ini = target.exists();
+        if had_ini {
+            fs::remove_file(&target).map_err(|e| format!("ลบ skygfx.ini ไม่สำเร็จ: {}", e))?;
+        }
+        toggle_skygfx_asi(game_dir, false)?;
+        if had_ini {
+            return Ok("ปิดใช้งาน SkyGfx และปิดปลั๊กอิน skygfx.asi แล้ว".into());
+        }
+        return Ok("SkyGfx ปิดใช้งานอยู่แล้ว".into());
+    }
+
+    let (src_name, label, filter_val) = match mode.as_str() {
+        "ps2" => ("skygfx1.ini", "PS2 Classic", "PS2"),
+        "pc" => ("skygfx2.ini", "PC Original", "PC"),
+        "mobile" => ("skygfx3.ini", "Mobile", "Mobile"),
+        _ => return Err(format!("ไม่รู้จัก SkyGfx preset '{}'", preset)),
+    };
+
+    let src = game_dir.join(src_name);
+    if !src.exists() {
+        return Err(format!("ไม่พบไฟล์ {} ในโฟลเดอร์เกม:\r\n{}", src_name, game_dir.display()));
+    }
+
+    toggle_skygfx_asi(game_dir, true)?;
+    let _ = sanitize_skygfx_templates(game_dir);
+    fs::copy(&src, &target).map_err(|e| format!("คัดลอก {} ไม่สำเร็จ: {}", src_name, e))?;
+
+    let has_texdb = game_dir.join("models").join("texdb").is_dir();
+    let mut enforce = vec![("keySwitch", "0"), ("colorFilter", filter_val)];
+    if mode == "mobile" && !has_texdb {
+        enforce.push(("detailMaps", "0"));
+    }
+    let _ = update_ini_keys(&target, &enforce, false);
+
+    Ok(format!("สลับโทนภาพเป็น {} เรียบร้อย (Rust Engine)", label))
+}
+
+/// Applies FPS limit cleanly across FPSUnlock.ini (numeric 1/0 + safe PhysicsScale) and
+/// FramerateVigilante.ini, capping Unlimited ("Max") at 240 FPS so GTA SA physics stay stable.
+pub fn apply_fps_limit(game_dir: &Path, fps: u32) -> Result<String, String> {
+    let scripts_dir = game_dir.join("scripts");
+    let unlock_ini = scripts_dir.join("FPSUnlock.ini");
+    let fv_ini = scripts_dir.join("FramerateVigilante.ini");
+    let has_fv_asi = scripts_dir.join("FramerateVigilante.asi").exists()
+        || game_dir.join("FramerateVigilante.asi").exists();
+
+    if !unlock_ini.exists() && !fv_ini.exists() {
+        return Err("ไม่พบไฟล์ตั้งค่า FPS ในโฟลเดอร์ scripts (FPSUnlock.ini หรือ FramerateVigilante.ini)".into());
+    }
+
+    let effective_fps = if fps == 0 { 240 } else { fps };
+    let fps_str = effective_fps.to_string();
+    let physics_scale = if has_fv_asi { "1.0" } else { "0.6" };
+
+    if unlock_ini.exists() {
+        // FPSUnlock.asi uses GetPrivateProfileIntA -> must write integer 1/0, never "true"
+        update_ini_keys(
+            &unlock_ini,
+            &[
+                ("UnlockFPS", "1"),
+                ("CustomFPS", &fps_str),
+                ("PhysicsScale", physics_scale),
+            ],
+            true,
+        )?;
+    }
+
+    if fv_ini.exists() {
+        update_ini_keys(
+            &fv_ini,
+            &[("FPSlimit", &fps_str), ("VehicleHandlingPatches", "1")],
+            false,
+        )?;
+    }
+
+    if fps == 0 {
+        Ok("ตั้งค่า FPS เป็น Max (เพดานปลอดภัย 240 FPS + กันบั๊กฟิสิกส์) เรียบร้อย".into())
+    } else {
+        Ok(format!("ตั้งค่า FPS Limit เป็น {} FPS เรียบร้อย", fps))
+    }
+}
+
+/// Cleans/truncates bloated log files and stale flat .bak files outside Zstd snapshots.
+fn clean_bloated_logs_and_backups(game_dir: &Path) -> usize {
+    let log_candidates = [
+        game_dir.join("scripts").join("FPSUnlock.log"),
+        game_dir.join("modloader").join("modloader.log"),
+        game_dir.join("samp.log"),
+        game_dir.join("cleo.log"),
+        game_dir.join("SVulcan.log"),
+    ];
+    let mut cleaned = 0usize;
+    for lp in log_candidates {
+        if let Ok(meta) = fs::metadata(&lp) {
+            // Clean FPSUnlock.log if over 64 KB or any log over 1 MB
+            let limit = if lp.file_name().and_then(|n| n.to_str()) == Some("FPSUnlock.log") {
+                64 * 1024
+            } else {
+                1024 * 1024
+            };
+            if meta.len() > limit && fs::write(&lp, b"").is_ok() {
+                cleaned += 1;
+            }
+        }
+    }
+    let backup_dir = game_dir.join("_mod_backup");
+    if backup_dir.join("snapshots").join("index.json").exists() {
+        if let Ok(rd) = fs::read_dir(&backup_dir) {
+            for ent in rd.flatten() {
+                let p = ent.path();
+                if p.is_file() {
+                    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                        if ext.eq_ignore_ascii_case("bak") && fs::remove_file(&p).is_ok() {
+                            cleaned += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    cleaned
+}
+
+fn sanitize_game_configs(game_dir: &Path) -> usize {
+    let mut count = 0usize;
+
+    let limit_ini = game_dir.join("III.VC.SA.LimitAdjuster.ini");
+    if limit_ini.exists() {
+        if let Ok(raw) = fs::read_to_string(&limit_ini) {
+            if raw.contains("MemoryAvailable = 50%") || raw.contains("MemoryAvailable=50%") {
+                if update_ini_keys(&limit_ini, &[("MemoryAvailable", "1024")], true).unwrap_or(false) {
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    if sanitize_stream_ini(&game_dir.join("stream.ini")).unwrap_or(false) {
+        count += 1;
+    }
+
+    let unlock_ini = game_dir.join("scripts").join("FPSUnlock.ini");
+    if unlock_ini.exists() {
+        let has_fv = game_dir.join("scripts").join("FramerateVigilante.asi").exists()
+            || game_dir.join("FramerateVigilante.asi").exists();
+        let physics_scale = if has_fv { "1.0" } else { "0.6" };
+        if update_ini_keys(
+            &unlock_ini,
+            &[("UnlockFPS", "1"), ("PhysicsScale", physics_scale)],
+            true,
+        )
+        .unwrap_or(false)
+        {
+            count += 1;
+        }
+    }
+
+    count += sanitize_skygfx_templates(game_dir).unwrap_or(0);
+    let active_sg = game_dir.join("skygfx.ini");
+    if active_sg.exists() && update_ini_keys(&active_sg, &[("keySwitch", "0")], false).unwrap_or(false) {
+        count += 1;
+    }
+
+    count
 }
 
 pub fn auto_fix_health(game_dir: &Path) -> Result<AutoFixResult, String> {
@@ -351,6 +753,10 @@ pub fn auto_fix_health(game_dir: &Path) -> Result<AutoFixResult, String> {
         }
     }
 
+    let laa_enabled = enable_pe_laa(&game_dir.join("gta_sa.exe")).unwrap_or(false);
+    let optimized_configs = sanitize_game_configs(game_dir);
+    let cleaned_logs = clean_bloated_logs_and_backups(game_dir);
+
     let mut remaining_warnings = Vec::new();
     if report.in_program_files {
         remaining_warnings.push("โฟลเดอร์เกมอยู่ใน Program Files (แนะนำย้ายออกหากติดสิทธิ์เขียนไฟล์)".into());
@@ -363,6 +769,9 @@ pub fn auto_fix_health(game_dir: &Path) -> Result<AutoFixResult, String> {
         fixed_readonly,
         disabled_duplicates,
         remaining_warnings,
+        laa_enabled,
+        optimized_configs,
+        cleaned_logs,
     })
 }
 
@@ -419,6 +828,69 @@ mod tests {
 
         let r2 = check_health(&dir, "ps2");
         assert_eq!(r2.fixable_count, 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_pe_laa_skygfx_fps_and_stream_sanitization() {
+        let dir = make_temp("gfx");
+        fs::create_dir_all(dir.join("scripts")).unwrap();
+
+        // Build minimal PE with e_lfanew = 0x80 and Characteristics = 0x010F (no 0x0020 LAA)
+        let mut pe = vec![0u8; 256];
+        pe[0] = b'M';
+        pe[1] = b'Z';
+        pe[0x3C] = 0x80;
+        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        pe[0x80 + 22..0x80 + 24].copy_from_slice(&0x010Fu16.to_le_bytes());
+        let exe = dir.join("gta_sa.exe");
+        fs::write(&exe, &pe).unwrap();
+        assert_eq!(check_pe_laa(&exe), Some(false));
+        assert!(enable_pe_laa(&exe).unwrap());
+        assert_eq!(check_pe_laa(&exe), Some(true));
+
+        // SkyGfx presets + asi toggling + keySwitch=0
+        fs::write(dir.join("skygfx.asi"), b"asi").unwrap();
+        fs::write(dir.join("skygfx1.ini"), "[SkyGfx]\nkeySwitch=0x79\ncolorFilter=Mobile\n").unwrap();
+        fs::write(dir.join("skygfx3.ini"), "[SkyGfx]\nkeySwitch=0x79\ndetailMaps=1\n").unwrap();
+
+        apply_skygfx_preset(&dir, "ps2").unwrap();
+        let sg = fs::read_to_string(dir.join("skygfx.ini")).unwrap();
+        assert!(sg.contains("keySwitch=0"));
+        assert!(sg.contains("colorFilter=PS2"));
+        assert!(dir.join("skygfx.asi").exists());
+
+        apply_skygfx_preset(&dir, "mobile").unwrap();
+        let sg_mob = fs::read_to_string(dir.join("skygfx.ini")).unwrap();
+        assert!(sg_mob.contains("detailMaps=0"));
+
+        apply_skygfx_preset(&dir, "off").unwrap();
+        assert!(!dir.join("skygfx.ini").exists());
+        assert!(!dir.join("skygfx.asi").exists());
+        assert!(dir.join("skygfx.asi.disabled").exists());
+
+        // FPSUnlock + FramerateVigilante coordination
+        fs::write(dir.join("scripts").join("FramerateVigilante.asi"), b"fv").unwrap();
+        fs::write(dir.join("scripts").join("FPSUnlock.ini"), "[Settings]\nUnlockFPS = true\nCustomFPS = 0\nPhysicsScale = 0.6\n").unwrap();
+        fs::write(dir.join("scripts").join("FramerateVigilante.ini"), "[Settings]\nFPSlimit=0\nVehicleHandlingPatches=0\n").unwrap();
+        apply_fps_limit(&dir, 0).unwrap();
+        let fu = fs::read_to_string(dir.join("scripts").join("FPSUnlock.ini")).unwrap();
+        let fv = fs::read_to_string(dir.join("scripts").join("FramerateVigilante.ini")).unwrap();
+        assert!(fu.contains("UnlockFPS = 1"));
+        assert!(fu.contains("CustomFPS = 240"));
+        assert!(fu.contains("PhysicsScale = 1.0"));
+        assert!(fv.contains("FPSlimit=240"));
+        assert!(fv.contains("VehicleHandlingPatches=1"));
+
+        // Memory + stream.ini
+        fs::write(dir.join("stream.ini"), "memory\t\t524288\ndevkit_memory\t524288\n").unwrap();
+        fs::write(dir.join("III.VC.SA.LimitAdjuster.ini"), "[SALIMITS]\nMemoryAvailable = 50%\n").unwrap();
+        let _ = sanitize_game_configs(&dir);
+        let st = fs::read_to_string(dir.join("stream.ini")).unwrap();
+        let la = fs::read_to_string(dir.join("III.VC.SA.LimitAdjuster.ini")).unwrap();
+        assert!(st.contains("1048576"));
+        assert!(la.contains("MemoryAvailable = 1024"));
 
         let _ = fs::remove_dir_all(&dir);
     }

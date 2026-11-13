@@ -754,6 +754,9 @@ internal partial class LauncherForm
 			DiscordRpc.UpdateGamePresence(sName, host, portStr, pCur, pMax);
 			if (closeAfter)
 			{
+				core.StopPingSpark();
+				if (sparkPollTimer != null) sparkPollTimer.Stop();
+				StopPubAuto();
 				base.ShowInTaskbar = false;
 				Hide();
 			}

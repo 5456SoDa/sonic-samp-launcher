@@ -25,6 +25,7 @@ internal partial class LauncherForm : Form
 	{
 		public string FolderName;
 		public string Display;
+		public int Priority = 50;
 		public override string ToString()
 		{
 			return Display;
@@ -145,7 +146,7 @@ internal partial class LauncherForm : Form
 
 		clbModFolders = new CheckedListBox();
 		clbModFolders.Location = new Point(14, 116);
-		clbModFolders.Size = new Size(300, 256);
+		clbModFolders.Size = new Size(300, 218);
 		clbModFolders.BackColor = colField;
 		clbModFolders.ForeColor = colText;
 		clbModFolders.BorderStyle = BorderStyle.FixedSingle;
@@ -153,6 +154,14 @@ internal partial class LauncherForm : Form
 		clbModFolders.CheckOnClick = true;
 		clbModFolders.IntegralHeight = false;
 		pnlMlCard.Controls.Add(clbModFolders);
+
+		RoundedBtn btnModPriority = MakeMiniBtn("⚡ ปรับลำดับ Priority (ปกติ 50 -> สูง 80 -> ต่ำ 20)", 14, 344, 300, 30);
+		btnModPriority.BorderColor = colAccent;
+		btnModPriority.Click += delegate
+		{
+			CycleSelectedModPriority();
+		};
+		pnlMlCard.Controls.Add(btnModPriority);
 
 		RoundedBtn btnSaveMods = MakeMiniBtn("💾  บันทึกการตั้งค่าม็อด", 14, 384, 196, 34);
 		btnSaveMods.BorderColor = colOk;
@@ -276,7 +285,8 @@ internal partial class LauncherForm : Form
 					double mb = f.TotalBytes / (1024.0 * 1024.0);
 					ModFolderItem item = new ModFolderItem();
 					item.FolderName = f.Name;
-					item.Display = string.Format("{0}  ({1} ไฟล์ • {2:0.0} MB)", f.Name, f.FileCount, mb);
+					item.Priority = f.Priority;
+					item.Display = string.Format("{0} [P:{1}]  ({2} ไฟล์ • {3:0.0} MB)", f.Name, f.Priority, f.FileCount, mb);
 					int idx = clbModFolders.Items.Add(item);
 					clbModFolders.SetItemChecked(idx, f.Enabled);
 				}
@@ -417,6 +427,30 @@ internal partial class LauncherForm : Form
 		File.WriteAllLines(iniPath, lines.ToArray(), new UTF8Encoding(false));
 	}
 
+	private void CycleSelectedModPriority()
+	{
+		ModFolderItem item = clbModFolders.SelectedItem as ModFolderItem;
+		if (item == null)
+		{
+			Toast("กรุณาคลิกเลือกโฟลเดอร์ม็อดในรายการก่อน");
+			return;
+		}
+		int nextPrio = (item.Priority == 50) ? 80 : ((item.Priority == 80) ? 20 : 50);
+		string err = core.SetModLoaderPriority(GetGameDir(), item.FolderName, nextPrio);
+		if (!string.IsNullOrEmpty(err))
+		{
+			ShowErr("ปรับลำดับ Priority ไม่สำเร็จ:\r\n" + err);
+			return;
+		}
+		int prevIdx = clbModFolders.SelectedIndex;
+		RefreshModsPage();
+		if (prevIdx >= 0 && prevIdx < clbModFolders.Items.Count)
+		{
+			clbModFolders.SelectedIndex = prevIdx;
+		}
+		ToastOk("ตั้ง Priority ของ \"" + item.FolderName + "\" เป็น " + nextPrio + " แล้ว");
+	}
+
 	private void SaveCurrentModLoaderConfig()
 	{
 		string gameDir = GetGameDir();
@@ -515,9 +549,9 @@ internal partial class LauncherForm : Form
 			dlg.ForeColor = colText;
 
 			string summary = string.Format(
-				"สแกนทั้งหมด {0} ไฟล์  (DFF: {1}  •  TXD: {2}  •  IMG: {3}  •  Textures: {4})\r\n" +
-				"พบข้อผิดพลาดร้ายแรง: {5}  |  คำเตือน (ขนาดใหญ่): {6}  |  ไฟล์ชื่อซ้ำใน ModLoader: {7}",
-				rep.ScannedFiles, rep.DffCount, rep.TxdCount, rep.ImgCount, rep.TextureCount,
+				"สแกนทั้งหมด {0} ไฟล์  (DFF: {1}  •  TXD: {2}  •  COL: {3}  •  IFP: {4}  •  IMG: {5}  •  Textures: {6})\r\n" +
+				"พบข้อผิดพลาดร้ายแรง: {7}  |  คำเตือน (ขนาดใหญ่): {8}  |  ไฟล์ชื่อซ้ำใน ModLoader: {9}",
+				rep.ScannedFiles, rep.DffCount, rep.TxdCount, rep.ColCount, rep.IfpCount, rep.ImgCount, rep.TextureCount,
 				rep.ErrorCount, rep.WarnCount, rep.DuplicateCount);
 
 			Color sumCol = (rep.ErrorCount > 0) ? Color.FromArgb(255, 99, 99) : ((rep.WarnCount > 0 || rep.DuplicateCount > 0) ? colYellow : colOk);

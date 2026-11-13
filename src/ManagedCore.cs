@@ -920,6 +920,21 @@ internal class ManagedCore : ICore
 		return "ต้องใช้งาน samp_core.dll สำหรับตั้งค่า ModLoader";
 	}
 
+	public string SetModLoaderPriority(string gameDir, string folderName, int priority)
+	{
+		return "ต้องใช้งาน samp_core.dll สำหรับปรับ Priority ของ ModLoader";
+	}
+
+	public string ApplySkyGfx(string gameDir, string preset)
+	{
+		throw new Exception("ต้องใช้งาน samp_core.dll สำหรับตั้งค่า SkyGfx");
+	}
+
+	public string ApplyFpsLimit(string gameDir, int fps)
+	{
+		throw new Exception("ต้องใช้งาน samp_core.dll สำหรับตั้งค่า FPS Limit");
+	}
+
 	public GuardRuntimeStatus GetGuardStatus(string gameDir)
 	{
 		return new GuardRuntimeStatus();

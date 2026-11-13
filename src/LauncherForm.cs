@@ -187,6 +187,7 @@ internal partial class LauncherForm : Form
 	private RoundedBtn btnWinClose;
 	private bool dwmApplied;
 	private bool uiBuilt;
+	private bool wasMinimized;
 	private List<Label> accentLabels = new List<Label>();
 
 	private System.Windows.Forms.Timer sparkPollTimer;
@@ -277,6 +278,37 @@ internal partial class LauncherForm : Form
 	protected override void OnResize(EventArgs e)
 	{
 		base.OnResize(e);
+		if (base.WindowState == FormWindowState.Minimized)
+		{
+			wasMinimized = true;
+			core.StopPingSpark();
+			if (sparkPollTimer != null)
+			{
+				sparkPollTimer.Stop();
+			}
+			StopPubAuto();
+			return;
+		}
+		if (wasMinimized)
+		{
+			wasMinimized = false;
+			if (sparkPollTimer != null)
+			{
+				sparkPollTimer.Start();
+			}
+			if (pnlPlay != null && pnlPlay.Visible)
+			{
+				ResumePlaySpark();
+			}
+			else if (pnlSrv != null && pnlSrv.Visible)
+			{
+				ResumeSelectedServerSpark();
+				if (viewMode == "public")
+				{
+					StartPubAuto();
+				}
+			}
+		}
 		if (uiBuilt)
 		{
 			PerformResponsiveLayout();
@@ -398,9 +430,9 @@ internal partial class LauncherForm : Form
 				(int)Math.Ceiling(badgeTextSz.Height) + badgePadY * 2);
 			if (rBadge.Right < base.Width - DpiHelper.S(140))
 			{
-				using (SolidBrush bBadge = new SolidBrush(Color.FromArgb(30, colYellow)))
-				using (SolidBrush bBadgeTxt = new SolidBrush(colYellow))
-				using (Pen pBadge = new Pen(colYellow, 1f))
+				using (SolidBrush bBadge = new SolidBrush(Color.FromArgb(28, colAccent)))
+				using (SolidBrush bBadgeTxt = new SolidBrush(colAccentHi))
+				using (Pen pBadge = new Pen(Color.FromArgb(180, colAccent), 1f))
 				{
 					graphics.FillRectangle(bBadge, rBadge);
 					graphics.DrawRectangle(pBadge, rBadge);
@@ -590,7 +622,7 @@ internal partial class LauncherForm : Form
 
 	private void SparkPollTick(object sender, EventArgs e)
 	{
-		if (base.IsDisposed || base.WindowState == FormWindowState.Minimized)
+		if (base.IsDisposed || !base.Visible || base.WindowState == FormWindowState.Minimized)
 		{
 			return;
 		}
@@ -972,13 +1004,14 @@ internal partial class LauncherForm : Form
 		tb.BackColor = colField;
 		tb.Font = fField;
 		tb.ForeColor = colSub;
+		tb.Tag = placeholder;
 		tb.Text = placeholder;
 		tb.GotFocus += delegate
 		{
-			if (tb.ForeColor == colSub)
+			if (tb.ForeColor == colSub || (!string.IsNullOrEmpty(placeholder) && tb.Text == placeholder))
 			{
-				tb.Text = "";
 				tb.ForeColor = colText;
+				tb.Text = "";
 			}
 			box.FocusBorder = true;
 			box.Invalidate();
@@ -987,8 +1020,8 @@ internal partial class LauncherForm : Form
 		{
 			if (tb.Text.Length == 0)
 			{
-				tb.Text = placeholder;
 				tb.ForeColor = colSub;
+				tb.Text = placeholder;
 			}
 			box.FocusBorder = false;
 			box.Invalidate();
@@ -1000,11 +1033,16 @@ internal partial class LauncherForm : Form
 
 	private string FieldVal(TextBox tb)
 	{
-		if (!(tb.ForeColor == colSub))
+		if (tb == null || tb.ForeColor == colSub)
 		{
-			return tb.Text.Trim();
+			return "";
 		}
-		return "";
+		string ph = tb.Tag as string;
+		if (!string.IsNullOrEmpty(ph) && tb.Text == ph)
+		{
+			return "";
+		}
+		return tb.Text.Trim();
 	}
 
 	private void ForceText(TextBox tb, string val)

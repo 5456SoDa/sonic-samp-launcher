@@ -9,30 +9,61 @@ use windows_sys::Win32::Foundation::{BOOL, HMODULE, MAX_PATH, TRUE};
 use windows_sys::Win32::System::LibraryLoader::{DisableThreadLibraryCalls, GetModuleFileNameW};
 use windows_sys::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 
-fn is_plugin_enabled() -> bool {
+struct GuardIniConfig {
+    enabled: bool,
+    catch_crash: bool,
+    high_precision_timer: bool,
+    telemetry: bool,
+}
+
+impl Default for GuardIniConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            catch_crash: true,
+            high_precision_timer: true,
+            telemetry: true,
+        }
+    }
+}
+
+fn parse_bool_val(v: &str) -> bool {
+    v == "1" || v.eq_ignore_ascii_case("true")
+}
+
+fn read_guard_config() -> GuardIniConfig {
+    let mut cfg = GuardIniConfig::default();
     let mut buf = [0u16; MAX_PATH as usize];
     let len = unsafe { GetModuleFileNameW(std::ptr::null_mut(), buf.as_mut_ptr(), MAX_PATH) };
     if len == 0 {
-        return true;
+        return cfg;
     }
     let exe = PathBuf::from(String::from_utf16_lossy(&buf[..len as usize]));
     let Some(root) = exe.parent() else {
-        return true;
+        return cfg;
     };
     let ini = root.join("scripts").join("SonicGuard.ini");
     let Ok(text) = fs::read_to_string(&ini) else {
-        return true;
+        return cfg;
     };
     for raw in text.lines() {
         let line = raw.trim();
+        if line.is_empty() || line.starts_with(';') || line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
         if let Some(eq) = line.find('=') {
-            if line[..eq].trim().eq_ignore_ascii_case("enabled") {
-                let v = line[eq + 1..].trim();
-                return v == "1" || v.eq_ignore_ascii_case("true");
+            let k = line[..eq].trim().to_ascii_lowercase();
+            let v = line[eq + 1..].trim();
+            match k.as_str() {
+                "enable" | "enabled" => cfg.enabled = parse_bool_val(v),
+                "catchcrash" => cfg.catch_crash = parse_bool_val(v),
+                "highprecisiontimer" => cfg.high_precision_timer = parse_bool_val(v),
+                "telemetry" => cfg.telemetry = parse_bool_val(v),
+                _ => {}
             }
         }
     }
-    true
+    cfg
 }
 
 #[no_mangle]
@@ -44,10 +75,15 @@ pub extern "system" fn DllMain(
     match fdw_reason {
         DLL_PROCESS_ATTACH => {
             unsafe { DisableThreadLibraryCalls(hinst_dll) };
-            if is_plugin_enabled() {
-                crash_handler::install_crash_filter();
+            let cfg = read_guard_config();
+            if cfg.enabled {
+                if cfg.catch_crash {
+                    crash_handler::install_crash_filter();
+                }
                 window::init_borderless_if_enabled();
-                perf::init_perf();
+                if cfg.high_precision_timer || cfg.telemetry {
+                    perf::init_perf();
+                }
             }
         }
         DLL_PROCESS_DETACH => {

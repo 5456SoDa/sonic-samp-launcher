@@ -1,13 +1,13 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AssetIssue {
     pub severity: String, // "error" | "warn"
-    pub kind: String,     // "dff" | "txd" | "img" | "dup"
+    pub kind: String,     // "dff" | "txd" | "img" | "col" | "ifp" | "dup"
     pub rel_path: String,
     pub message: String,
 }
@@ -18,6 +18,8 @@ pub struct AssetScanReport {
     pub dff_count: usize,
     pub txd_count: usize,
     pub img_count: usize,
+    pub col_count: usize,
+    pub ifp_count: usize,
     pub texture_count: usize,
     pub error_count: usize,
     pub warn_count: usize,
@@ -39,26 +41,45 @@ fn cstr_trim(b: &[u8]) -> String {
     String::from_utf8_lossy(&b[..end]).trim().to_string()
 }
 
-pub fn validate_dff_bytes(data: &[u8]) -> Result<(), String> {
-    if data.len() < 12 {
+fn read_rw_header<R: Read>(r: &mut R) -> Result<(u32, u64), String> {
+    let mut hdr = [0u8; 12];
+    r.read_exact(&mut hdr)
+        .map_err(|e| format!("อ่าน RenderWare Header ไม่สำเร็จ: {}", e))?;
+    let ctype = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+    let clen = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
+    Ok((ctype, clen))
+}
+
+fn validate_dff_reader<R: Read>(r: &mut R, total_len: u64) -> Result<(), String> {
+    if total_len < 12 {
         return Err("ไฟล์ DFF เล็กเกินไป (< 12 bytes)".into());
     }
-    let chunk_type = le_u32(data, 0).unwrap_or(0);
-    let chunk_len = le_u32(data, 4).unwrap_or(0) as usize;
+    let (chunk_type, chunk_len) = read_rw_header(r)?;
     if chunk_type != 0x0010 {
         return Err(format!(
             "Header ไม่ใช่ RenderWare Clump (พบ 0x{:04X} แทน 0x0010)",
             chunk_type
         ));
     }
-    if 12 + chunk_len > data.len() {
+    if 12 + chunk_len > total_len {
         return Err(format!(
             "ไฟล์ DFF ไม่สมบูรณ์/ถูกตัดขาด (ต้องการ {} bytes แต่ไฟล์มี {} bytes)",
             12 + chunk_len,
-            data.len()
+            total_len
         ));
     }
     Ok(())
+}
+
+pub fn validate_dff_bytes(data: &[u8]) -> Result<(), String> {
+    let mut cur = Cursor::new(data);
+    validate_dff_reader(&mut cur, data.len() as u64)
+}
+
+pub fn validate_dff_file(path: &Path) -> Result<(), String> {
+    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    validate_dff_reader(&mut f, len)
 }
 
 pub struct TxdInspectResult {
@@ -66,34 +87,33 @@ pub struct TxdInspectResult {
     pub warnings: Vec<String>,
 }
 
-pub fn validate_txd_bytes(data: &[u8]) -> Result<TxdInspectResult, String> {
-    if data.len() < 12 {
+fn validate_txd_reader<R: Read + Seek>(r: &mut R, total_len: u64) -> Result<TxdInspectResult, String> {
+    if total_len < 12 {
         return Err("ไฟล์ TXD เล็กเกินไป (< 12 bytes)".into());
     }
-    let chunk_type = le_u32(data, 0).unwrap_or(0);
-    let chunk_len = le_u32(data, 4).unwrap_or(0) as usize;
+    let (chunk_type, chunk_len) = read_rw_header(r)?;
     if chunk_type != 0x0016 {
         return Err(format!(
             "Header ไม่ใช่ RenderWare TXD (พบ 0x{:04X} แทน 0x0016)",
             chunk_type
         ));
     }
-    let end = 12 + chunk_len;
-    if end > data.len() {
+    let end = 12u64 + chunk_len;
+    if end > total_len {
         return Err(format!(
             "ไฟล์ TXD ไม่สมบูรณ์/ถูกตัดขาด (ต้องการ {} bytes แต่ไฟล์มี {} bytes)",
-            end,
-            data.len()
+            end, total_len
         ));
     }
 
-    let mut pos = 12usize;
+    let mut pos = 12u64;
     let mut parsed_tex = 0usize;
     let mut warnings = Vec::new();
 
     while pos + 12 <= end {
-        let ctype = le_u32(data, pos).unwrap_or(0);
-        let clen = le_u32(data, pos + 4).unwrap_or(0) as usize;
+        r.seek(SeekFrom::Start(pos))
+            .map_err(|e| format!("Seek TXD ล้มเหลว: {}", e))?;
+        let (ctype, clen) = read_rw_header(r)?;
         let cend = pos + 12 + clen;
         if cend > end {
             return Err(format!(
@@ -102,24 +122,26 @@ pub fn validate_txd_bytes(data: &[u8]) -> Result<TxdInspectResult, String> {
             ));
         }
         if ctype == 0x0015 {
-            // rwID_TEXTURENATIVE: first inner chunk is usually 0x0001 (STRUCT)
             parsed_tex += 1;
             let mut inner = pos + 12;
             while inner + 12 <= cend {
-                let itype = le_u32(data, inner).unwrap_or(0);
-                let ilen = le_u32(data, inner + 4).unwrap_or(0) as usize;
+                r.seek(SeekFrom::Start(inner))
+                    .map_err(|e| format!("Seek TXD inner ล้มเหลว: {}", e))?;
+                let (itype, ilen) = read_rw_header(r)?;
                 let iend = inner + 12 + ilen;
                 if iend > cend {
                     break;
                 }
                 if itype == 0x0001 && ilen >= 88 {
-                    let s = &data[inner + 12..iend];
-                    let platform = le_u32(s, 0).unwrap_or(0);
+                    let mut s = [0u8; 88];
+                    r.read_exact(&mut s)
+                        .map_err(|e| format!("อ่าน STRUCT เท็กซ์เจอร์ไม่สำเร็จ: {}", e))?;
+                    let platform = le_u32(&s, 0).unwrap_or(0);
                     if platform == 8 || platform == 9 {
                         let tex_name = cstr_trim(&s[8..40]);
-                        let d3d_or_alpha = le_u32(s, 76).unwrap_or(0);
-                        let width = le_u16(s, 80).unwrap_or(0);
-                        let height = le_u16(s, 82).unwrap_or(0);
+                        let d3d_or_alpha = le_u32(&s, 76).unwrap_or(0);
+                        let width = le_u16(&s, 80).unwrap_or(0);
+                        let height = le_u16(&s, 82).unwrap_or(0);
                         let comp = s[87];
                         let is_dxt = (d3d_or_alpha == 0x31545844
                             || d3d_or_alpha == 0x33545844
@@ -155,6 +177,63 @@ pub fn validate_txd_bytes(data: &[u8]) -> Result<TxdInspectResult, String> {
         texture_count: parsed_tex,
         warnings,
     })
+}
+
+pub fn validate_txd_bytes(data: &[u8]) -> Result<TxdInspectResult, String> {
+    let mut cur = Cursor::new(data);
+    validate_txd_reader(&mut cur, data.len() as u64)
+}
+
+pub fn validate_txd_file(path: &Path) -> Result<TxdInspectResult, String> {
+    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    validate_txd_reader(&mut f, len)
+}
+
+/// Validates GTA San Andreas .col collision archives (COLL / COL2 / COL3 / COL4).
+pub fn validate_col_file(path: &Path) -> Result<(), String> {
+    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if file_len < 12 {
+        return Err("ไฟล์ COL เล็กเกินไป (< 12 bytes)".into());
+    }
+    let mut hdr = [0u8; 8];
+    f.read_exact(&mut hdr)
+        .map_err(|_| "อ่าน Header COL ไม่สำเร็จ".to_string())?;
+    let magic = &hdr[0..4];
+    if !matches!(magic, b"COLL" | b"COL2" | b"COL3" | b"COL4") {
+        return Err("Header ไม่ใช่ไฟล์ Collision ของ GTA (COLL/COL2/COL3/COL4)".into());
+    }
+    let size = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
+    if size < 4 || size + 8 > file_len {
+        return Err(format!(
+            "ไฟล์ COL ไม่สมบูรณ์/ถูกตัดขาด (ต้องการ {} bytes แต่ไฟล์มี {} bytes)",
+            size + 8,
+            file_len
+        ));
+    }
+    Ok(())
+}
+
+/// Validates GTA animation packages (.ifp: ANPK / ANP3).
+pub fn validate_ifp_file(path: &Path) -> Result<(), String> {
+    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if file_len < 16 {
+        return Err("ไฟล์ IFP เล็กเกินไป (< 16 bytes)".into());
+    }
+    let mut hdr = [0u8; 8];
+    f.read_exact(&mut hdr)
+        .map_err(|_| "อ่าน Header IFP ไม่สำเร็จ".to_string())?;
+    let magic = &hdr[0..4];
+    if !matches!(magic, b"ANPK" | b"ANP3") {
+        return Err("Header ไม่ใช่ไฟล์ Animation IFP มาตรฐาน (ANPK/ANP3)".into());
+    }
+    let size = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
+    if size == 0 {
+        return Err("ขนาดข้อมูลภายใน IFP เป็น 0 (ไฟล์เสียหาย)".into());
+    }
+    Ok(())
 }
 
 pub fn validate_img_file(path: &Path) -> Result<usize, String> {
@@ -247,6 +326,8 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
         dff_count: 0,
         txd_count: 0,
         img_count: 0,
+        col_count: 0,
+        ifp_count: 0,
         texture_count: 0,
         error_count: 0,
         warn_count: 0,
@@ -281,49 +362,45 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
             "dff" => {
                 report.scanned_files += 1;
                 report.dff_count += 1;
-                if let Ok(bytes) = fs::read(&path) {
-                    if let Err(msg) = validate_dff_bytes(&bytes) {
-                        report.error_count += 1;
-                        if report.issues.len() < 150 {
-                            report.issues.push(AssetIssue {
-                                severity: "error".into(),
-                                kind: "dff".into(),
-                                rel_path: rel,
-                                message: msg,
-                            });
-                        }
+                if let Err(msg) = validate_dff_file(&path) {
+                    report.error_count += 1;
+                    if report.issues.len() < 150 {
+                        report.issues.push(AssetIssue {
+                            severity: "error".into(),
+                            kind: "dff".into(),
+                            rel_path: rel,
+                            message: msg,
+                        });
                     }
                 }
             }
             "txd" => {
                 report.scanned_files += 1;
                 report.txd_count += 1;
-                if let Ok(bytes) = fs::read(&path) {
-                    match validate_txd_bytes(&bytes) {
-                        Ok(res) => {
-                            report.texture_count += res.texture_count;
-                            for w in res.warnings {
-                                report.warn_count += 1;
-                                if report.issues.len() < 150 {
-                                    report.issues.push(AssetIssue {
-                                        severity: "warn".into(),
-                                        kind: "txd".into(),
-                                        rel_path: rel.clone(),
-                                        message: w,
-                                    });
-                                }
-                            }
-                        }
-                        Err(msg) => {
-                            report.error_count += 1;
+                match validate_txd_file(&path) {
+                    Ok(res) => {
+                        report.texture_count += res.texture_count;
+                        for w in res.warnings {
+                            report.warn_count += 1;
                             if report.issues.len() < 150 {
                                 report.issues.push(AssetIssue {
-                                    severity: "error".into(),
+                                    severity: "warn".into(),
                                     kind: "txd".into(),
-                                    rel_path: rel,
-                                    message: msg,
+                                    rel_path: rel.clone(),
+                                    message: w,
                                 });
                             }
+                        }
+                    }
+                    Err(msg) => {
+                        report.error_count += 1;
+                        if report.issues.len() < 150 {
+                            report.issues.push(AssetIssue {
+                                severity: "error".into(),
+                                kind: "txd".into(),
+                                rel_path: rel,
+                                message: msg,
+                            });
                         }
                     }
                 }
@@ -337,6 +414,36 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
                         report.issues.push(AssetIssue {
                             severity: "error".into(),
                             kind: "img".into(),
+                            rel_path: rel,
+                            message: msg,
+                        });
+                    }
+                }
+            }
+            "col" => {
+                report.scanned_files += 1;
+                report.col_count += 1;
+                if let Err(msg) = validate_col_file(&path) {
+                    report.error_count += 1;
+                    if report.issues.len() < 150 {
+                        report.issues.push(AssetIssue {
+                            severity: "error".into(),
+                            kind: "col".into(),
+                            rel_path: rel,
+                            message: msg,
+                        });
+                    }
+                }
+            }
+            "ifp" => {
+                report.scanned_files += 1;
+                report.ifp_count += 1;
+                if let Err(msg) = validate_ifp_file(&path) {
+                    report.error_count += 1;
+                    if report.issues.len() < 150 {
+                        report.issues.push(AssetIssue {
+                            severity: "error".into(),
+                            kind: "ifp".into(),
                             rel_path: rel,
                             message: msg,
                         });
@@ -362,7 +469,7 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
                     severity: "warn".into(),
                     kind: "dup".into(),
                     rel_path: k,
-                    message: format!("ไฟล์ชื่อซ้ำทับกัน {} จุด: {}", paths.len(), paths.join(" <-> ")),
+                    message: format!("ไฟล์ชื่อซ้ำทับกัน {} จุด (ปรับ Priority ใน ModLoader ได้): {}", paths.len(), paths.join(" <-> ")),
                 });
             }
         }
@@ -458,11 +565,27 @@ mod tests {
         bad_img.extend_from_slice(&entry);
         fs::write(dir.join("modloader").join("PackA").join("broken.img"), &bad_img).unwrap();
 
+        // Valid + invalid COL & IFP
+        let mut ok_col = Vec::new();
+        ok_col.extend_from_slice(b"COL3");
+        ok_col.extend_from_slice(&4u32.to_le_bytes());
+        ok_col.extend_from_slice(&[0u8; 4]);
+        fs::write(dir.join("modloader").join("PackA").join("map.col"), &ok_col).unwrap();
+        fs::write(dir.join("modloader").join("PackB").join("bad.col"), b"BADCOL123456").unwrap();
+
+        let mut ok_ifp = Vec::new();
+        ok_ifp.extend_from_slice(b"ANP3");
+        ok_ifp.extend_from_slice(&8u32.to_le_bytes());
+        ok_ifp.extend_from_slice(&[0u8; 8]);
+        fs::write(dir.join("modloader").join("PackA").join("ped.ifp"), &ok_ifp).unwrap();
+
         let rep = scan_game_assets(&dir);
         assert_eq!(rep.dff_count, 2);
         assert_eq!(rep.img_count, 1);
+        assert_eq!(rep.col_count, 2);
+        assert_eq!(rep.ifp_count, 1);
         assert_eq!(rep.duplicate_count, 1);
-        assert_eq!(rep.error_count, 1);
+        assert_eq!(rep.error_count, 2);
         assert_eq!(rep.warn_count, 1);
 
         let _ = fs::remove_dir_all(&dir);
