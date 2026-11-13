@@ -12,5 +12,7 @@ internal class QueryResult
 
 	public string Mode = "";
 
+	public string Language = "";
+
 	public bool IsOpenMp;
 }

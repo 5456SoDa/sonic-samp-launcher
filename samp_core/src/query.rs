@@ -153,6 +153,7 @@ pub struct ScanUpdate {
     pub max: i32,
     pub ping: i32,
     pub mode: String,
+    pub language: String,
     pub is_open_mp: bool,
 }
 
@@ -307,6 +308,7 @@ pub async fn run_batch_queries(targets: Vec<ServerTarget>, concurrency: usize, s
                 max: qr.max,
                 ping: qr.ping,
                 mode: qr.mode,
+                language: qr.language,
                 is_open_mp: qr.is_open_mp,
             };
             if let Ok(mut q) = st.queue.lock() {
@@ -375,4 +377,29 @@ pub fn poll_scan(handle: u64, max_items: usize) -> PollBatch {
         remove_scan(handle);
     }
     batch
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_update_serializes_language() {
+        let upd = ScanUpdate {
+            ip: "127.0.0.1".to_string(),
+            port: 7777,
+            online: true,
+            name: "Thai RP".to_string(),
+            players: 10,
+            max: 100,
+            ping: 25,
+            mode: "RP".to_string(),
+            language: "ไทย".to_string(),
+            is_open_mp: true,
+        };
+        let v: serde_json::Value = serde_json::to_value(&upd).expect("serialize ScanUpdate");
+        assert_eq!(v["language"], "ไทย");
+        assert_eq!(v["mode"], "RP");
+        assert_eq!(v["is_open_mp"], true);
+    }
 }

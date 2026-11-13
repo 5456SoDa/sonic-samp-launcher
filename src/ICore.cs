@@ -11,6 +11,7 @@ internal class ScanUpdateItem
 	public int Max;
 	public int Ping = -1;
 	public string Mode = "";
+	public string Language = "";
 	public bool IsOpenMp;
 }
 

@@ -19,10 +19,11 @@ internal class StatsDialog : Form
 		Text = "สถิติเซิร์ฟเวอร์";
 		BackColor = Color.FromArgb(17, 17, 24);
 		base.StartPosition = FormStartPosition.CenterParent;
-		base.Size = new Size(580, 440);
+		base.ClientSize = DpiHelper.Sz(564, 408);
 		base.ShowInTaskbar = false;
 		base.FormBorderStyle = FormBorderStyle.FixedDialog;
 		base.MaximizeBox = false;
+		base.MinimizeBox = false;
 
 		base.FormClosed += delegate
 		{
@@ -87,36 +88,46 @@ internal class StatsDialog : Form
 			AutoSize = true
 		};
 		base.Controls.Add(value3);
-		RoundedBtn roundedBtn = new RoundedBtn("ปิด", Color.FromArgb(51, 204, 255), Color.FromArgb(102, 224, 255), Color.FromArgb(11, 14, 20), 8, new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold));
-		roundedBtn.Location = new Point(440, 360);
-		roundedBtn.Size = new Size(104, 36);
+		RoundedBtn roundedBtn = new RoundedBtn("ปิด (Esc)", Color.FromArgb(51, 204, 255), Color.FromArgb(102, 224, 255), Color.FromArgb(11, 14, 20), 8, new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold));
+		roundedBtn.Location = new Point(440, 358);
+		roundedBtn.Size = new Size(104, 34);
 		roundedBtn.Click += delegate
 		{
 			Close();
 		};
 		base.Controls.Add(roundedBtn);
+		base.AcceptButton = roundedBtn;
+		base.CancelButton = roundedBtn;
+		DpiHelper.ScaleControlTree(this);
 		base.Paint += delegate(object s, PaintEventArgs e)
 		{
 			Graphics graphics = e.Graphics;
 			graphics.SmoothingMode = SmoothingMode.AntiAlias;
-			int chartTop = (extra != null && extra.Length > 0) ? 88 : 74;
-			int chartHeight = (extra != null && extra.Length > 0) ? 254 : 268;
-			Rectangle rectangle = new Rectangle(20, chartTop, base.Width - 60, chartHeight);
+			int chartTop = DpiHelper.S((extra != null && extra.Length > 0) ? 88 : 74);
+			int chartHeight = DpiHelper.S((extra != null && extra.Length > 0) ? 254 : 268);
+			Rectangle rectangle = new Rectangle(DpiHelper.S(20), chartTop, Math.Max(DpiHelper.S(60), base.ClientSize.Width - DpiHelper.S(40)), chartHeight);
 			using (SolidBrush brush = new SolidBrush(Color.FromArgb(26, 26, 38)))
 			{
 				using (GraphicsPath graphicsPath = new GraphicsPath())
 				{
-					int num5 = 24;
-					graphicsPath.AddArc(rectangle.X, rectangle.Y, num5, num5, 180f, 90f);
-					graphicsPath.AddArc(rectangle.Right - num5, rectangle.Y, num5, num5, 270f, 90f);
-					graphicsPath.AddArc(rectangle.Right - num5, rectangle.Bottom - num5, num5, num5, 0f, 90f);
-					graphicsPath.AddArc(rectangle.X, rectangle.Bottom - num5, num5, num5, 90f, 90f);
-					graphicsPath.CloseFigure();
+					int num5 = Math.Min(DpiHelper.S(24), Math.Min(rectangle.Width, rectangle.Height));
+					if (num5 >= 2)
+					{
+						graphicsPath.AddArc(rectangle.X, rectangle.Y, num5, num5, 180f, 90f);
+						graphicsPath.AddArc(rectangle.Right - num5, rectangle.Y, num5, num5, 270f, 90f);
+						graphicsPath.AddArc(rectangle.Right - num5, rectangle.Bottom - num5, num5, num5, 0f, 90f);
+						graphicsPath.AddArc(rectangle.X, rectangle.Bottom - num5, num5, num5, 90f, 90f);
+						graphicsPath.CloseFigure();
+					}
+					else
+					{
+						graphicsPath.AddRectangle(rectangle);
+					}
 					graphics.FillPath(brush, graphicsPath);
 				}
 			}
-			int num6 = 24;
-			Rectangle rectangle2 = new Rectangle(rectangle.X + num6, rectangle.Y + num6, rectangle.Width - num6 * 2, rectangle.Height - num6 * 2);
+			int num6 = DpiHelper.S(24);
+			Rectangle rectangle2 = new Rectangle(rectangle.X + num6, rectangle.Y + num6, Math.Max(10, rectangle.Width - num6 * 2), Math.Max(10, rectangle.Height - num6 * 2));
 			int num7 = Math.Min(vals.Count, 120);
 			int num8 = vals.Count - num7;
 			int num9 = 1;
@@ -138,7 +149,7 @@ internal class StatsDialog : Form
 			List<Point> list = new List<Point>();
 			if (num7 == 1)
 			{
-				int ySingle = rectangle2.Bottom - rectangle2.Height * vals[num8] / num9;
+				int ySingle = rectangle2.Bottom - rectangle2.Height * Math.Max(0, vals[num8]) / num9;
 				list.Add(new Point(rectangle2.X + rectangle2.Width / 2, ySingle));
 			}
 			else if (num7 > 1)
@@ -146,16 +157,21 @@ internal class StatsDialog : Form
 				for (int k = 0; k < num7; k++)
 				{
 					int num11 = rectangle2.X + rectangle2.Width * k / (num7 - 1);
-					int num12 = rectangle2.Bottom - rectangle2.Height * vals[num8 + k] / num9;
+					int num12 = rectangle2.Bottom - rectangle2.Height * Math.Max(0, vals[num8 + k]) / num9;
 					list.Add(new Point(num11, num12));
 				}
 			}
-			if (list.Count == 1)
+			if (list.Count == 0)
+			{
+				TextRenderer.DrawText(graphics, "ยังไม่มีข้อมูลสถิติผู้เล่นที่บันทึกไว้", fChartLabel, rectangle2, Color.FromArgb(140, 155, 180), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+			}
+			else if (list.Count == 1)
 			{
 				Point ptOnly = list[0];
+				int dotSz = DpiHelper.S(11);
 				using (SolidBrush brushSingle = new SolidBrush(Color.FromArgb(90, 210, 130)))
 				{
-					graphics.FillEllipse(brushSingle, ptOnly.X - 5, ptOnly.Y - 5, 11, 11);
+					graphics.FillEllipse(brushSingle, ptOnly.X - dotSz / 2, ptOnly.Y - dotSz / 2, dotSz, dotSz);
 				}
 			}
 			else if (list.Count >= 2)
@@ -169,19 +185,20 @@ internal class StatsDialog : Form
 				{
 					graphics.FillPath(brush2, graphicsPath3);
 				}
-				using (Pen pen2 = new Pen(Color.FromArgb(51, 204, 255), 2.2f))
+				using (Pen pen2 = new Pen(Color.FromArgb(51, 204, 255), DpiHelper.Sf(2.2f)))
 				{
 					graphics.DrawPath(pen2, graphicsPath2);
 				}
 				graphicsPath2.Dispose();
 				graphicsPath3.Dispose();
 				Point point = list[list.Count - 1];
+				int dotSz = DpiHelper.S(9);
 				using (SolidBrush brush3 = new SolidBrush(Color.FromArgb(90, 210, 130)))
 				{
-					graphics.FillEllipse(brush3, point.X - 4, point.Y - 4, 9, 9);
+					graphics.FillEllipse(brush3, point.X - dotSz / 2, point.Y - dotSz / 2, dotSz, dotSz);
 				}
 			}
-			TextRenderer.DrawText(graphics, "จำนวนผู้เล่น (100 ตัวอย่างล่าสุด)", fChartLabel, new Point(rectangle.X + num6, rectangle.Bottom - 20), Color.FromArgb(120, 120, 145));
+			TextRenderer.DrawText(graphics, "จำนวนผู้เล่น (" + num7 + " ตัวอย่างล่าสุด)", fChartLabel, new Point(rectangle.X + num6, rectangle.Bottom - DpiHelper.S(20)), Color.FromArgb(120, 120, 145));
 		};
 	}
 }

@@ -261,6 +261,7 @@ internal class ManagedCore : ICore
 					int off = 16;
 					queryResult.Name = ReadStr(array, ref off);
 					queryResult.Mode = ReadStr(array, ref off);
+					queryResult.Language = ReadStr(array, ref off);
 				}
 			}
 			if (queryResult.Online)

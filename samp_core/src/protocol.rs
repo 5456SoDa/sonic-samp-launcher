@@ -10,6 +10,7 @@ pub struct QueryInfo {
     pub max: i32,
     pub ping: i32,
     pub mode: String,
+    pub language: String,
     pub is_open_mp: bool,
 }
 
@@ -22,6 +23,7 @@ impl Default for QueryInfo {
             max: 0,
             ping: -1,
             mode: String::new(),
+            language: String::new(),
             is_open_mp: false,
         }
     }
@@ -106,6 +108,7 @@ pub fn parse_info_packet(buf: &[u8], ping_ms: i32) -> Option<QueryInfo> {
     let mut off = 16usize;
     let name = read_str32(buf, &mut off);
     let mode = read_str32(buf, &mut off);
+    let language = read_str32(buf, &mut off);
     Some(QueryInfo {
         online: true,
         name,
@@ -113,6 +116,7 @@ pub fn parse_info_packet(buf: &[u8], ping_ms: i32) -> Option<QueryInfo> {
         max,
         ping: ping_ms,
         mode,
+        language,
         is_open_mp: false,
     })
 }
@@ -264,6 +268,15 @@ mod tests {
         assert_eq!(info.ping, 23);
         assert_eq!(info.name, "เซิร์ฟไทย Test");
         assert_eq!(info.mode, "Roleplay");
+        assert_eq!(info.language, "");
+
+        let lang_bytes = encode_cp874("ไทย / English");
+        let mut full_pkt = pkt.clone();
+        full_pkt.extend_from_slice(&(lang_bytes.len() as u32).to_le_bytes());
+        full_pkt.extend_from_slice(&lang_bytes);
+        let full_info = parse_info_packet(&full_pkt, 19).expect("should parse with language");
+        assert_eq!(full_info.language, "ไทย / English");
+        assert_eq!(full_info.ping, 19);
     }
 
     #[test]

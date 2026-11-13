@@ -555,7 +555,29 @@ internal partial class LauncherForm : Form
 			if (heroSpark != null) heroSpark.ClearData();
 			if (detSpark != null) detSpark.ClearData();
 			core.StartPingSpark(host, port);
+
+			System.Windows.Forms.Timer quickTick = new System.Windows.Forms.Timer();
+			quickTick.Interval = 220;
+			activeTimers.Add(quickTick);
+			quickTick.Tick += delegate
+			{
+				quickTick.Stop();
+				quickTick.Dispose();
+				activeTimers.Remove(quickTick);
+				if (!base.IsDisposed)
+				{
+					SparkPollTick(this, EventArgs.Empty);
+				}
+			};
+			quickTick.Start();
 		}
+	}
+
+	private void StopActiveSpark()
+	{
+		activeSparkHost = "";
+		activeSparkPort = 0;
+		core.StopPingSpark();
 	}
 
 	private void SparkPollTick(object sender, EventArgs e)
@@ -804,12 +826,12 @@ internal partial class LauncherForm : Form
 			ResumeSelectedServerSpark();
 			if (viewMode == "mine")
 			{
-				RefreshAllServers();
+				RefreshAllServers(false);
 			}
 		}
 		else
 		{
-			core.StopPingSpark();
+			StopActiveSpark();
 		}
 		if (idx != 1)
 		{
@@ -1245,7 +1267,17 @@ internal partial class LauncherForm : Form
 	private static GraphicsPath RoundRect(Rectangle r, int rad)
 	{
 		GraphicsPath graphicsPath = new GraphicsPath();
-		int num = rad * 2;
+		if (r.Width <= 0 || r.Height <= 0)
+		{
+			graphicsPath.AddRectangle(new Rectangle(r.X, r.Y, Math.Max(1, r.Width), Math.Max(1, r.Height)));
+			return graphicsPath;
+		}
+		int num = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
+		if (num < 2)
+		{
+			graphicsPath.AddRectangle(r);
+			return graphicsPath;
+		}
 		graphicsPath.AddArc(r.X, r.Y, num, num, 180f, 90f);
 		graphicsPath.AddArc(r.Right - num, r.Y, num, num, 270f, 90f);
 		graphicsPath.AddArc(r.Right - num, r.Bottom - num, num, num, 0f, 90f);
@@ -1258,6 +1290,13 @@ internal partial class LauncherForm : Form
 	{
 		if (disposing)
 		{
+			if (sparkPollTimer != null)
+			{
+				sparkPollTimer.Stop();
+				sparkPollTimer.Dispose();
+				sparkPollTimer = null;
+			}
+			StopServerTimers();
 			if (bgCache != null) { bgCache.Dispose(); bgCache = null; }
 			if (brCard != null) brCard.Dispose();
 			if (brSel != null) brSel.Dispose();

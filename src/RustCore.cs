@@ -194,6 +194,7 @@ internal class RustCore : ICore
 			qr.Max = GetInt(d, "max", 0);
 			qr.Ping = GetInt(d, "ping", -1);
 			qr.Mode = GetStr(d, "mode");
+			qr.Language = GetStr(d, "language");
 			qr.IsOpenMp = GetBool(d, "is_open_mp");
 		}
 		catch
@@ -355,6 +356,7 @@ internal class RustCore : ICore
 							u.Max = GetInt(ud, "max", 0);
 							u.Ping = GetInt(ud, "ping", -1);
 							u.Mode = GetStr(ud, "mode");
+							u.Language = GetStr(ud, "language");
 							u.IsOpenMp = GetBool(ud, "is_open_mp");
 							res.Updates.Add(u);
 						}

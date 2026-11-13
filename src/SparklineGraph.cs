@@ -144,80 +144,121 @@ internal class SparklineGraph : Control
 				}
 			}
 
-			// Build point array across 30-slot window (right-aligned)
+			// Build contiguous valid segments across sample window so packet drops render visible breaks
 			int slots = Math.Max(hist.Count, 2);
 			float stepX = (float)plot.Width / Math.Max(1, slots - 1);
-			List<PointF> pts = new List<PointF>();
+			List<List<PointF>> segments = new List<List<PointF>>();
+			List<PointF> curSeg = new List<PointF>();
 			for (int i = 0; i < hist.Count; i++)
 			{
 				float x = plot.Left + i * stepX;
 				int val = hist[i];
 				if (val < 0)
 				{
-					// Mark packet loss spike on baseline
-					using (Pen pDrop = new Pen(Color.FromArgb(160, ErrColor), DpiHelper.Sf(1.5f)))
+					if (curSeg.Count > 0)
 					{
-						g.DrawLine(pDrop, x, plot.Bottom - DpiHelper.S(5), x, plot.Bottom);
+						segments.Add(curSeg);
+						curSeg = new List<PointF>();
+					}
+					using (Pen pStripe = new Pen(Color.FromArgb(35, ErrColor), 1f))
+					{
+						pStripe.DashStyle = DashStyle.Dot;
+						g.DrawLine(pStripe, x, plot.Top, x, plot.Bottom);
+					}
+					using (Pen pDrop = new Pen(Color.FromArgb(195, ErrColor), DpiHelper.Sf(1.8f)))
+					{
+						g.DrawLine(pDrop, x, plot.Bottom - DpiHelper.S(6), x, plot.Bottom);
 					}
 					continue;
 				}
 				float norm = (val - lo) / range;
 				float y = plot.Bottom - norm * plot.Height;
 				y = Math.Max(plot.Top + 2, Math.Min(plot.Bottom - 2, y));
-				pts.Add(new PointF(x, y));
+				curSeg.Add(new PointF(x, y));
+			}
+			if (curSeg.Count > 0)
+			{
+				segments.Add(curSeg);
 			}
 
-			if (pts.Count == 1)
+			PointF lastValidPt = PointF.Empty;
+			bool hasLastValid = false;
+			foreach (List<PointF> seg in segments)
 			{
-				pts.Add(new PointF(plot.Right, pts[0].Y));
-			}
-
-			if (pts.Count >= 2)
-			{
-				using (GraphicsPath wavePath = new GraphicsPath())
-				using (GraphicsPath fillPath = new GraphicsPath())
+				if (seg.Count == 1)
 				{
-					PointF[] arr = pts.ToArray();
-					wavePath.AddCurve(arr, 0.35f);
-
-					fillPath.AddCurve(arr, 0.35f);
-					fillPath.AddLine(arr[arr.Length - 1].X, plot.Bottom, arr[0].X, plot.Bottom);
-					fillPath.CloseFigure();
-
-					using (LinearGradientBrush lgb = new LinearGradientBrush(
-						new Rectangle(plot.Left, plot.Top - 2, plot.Width, plot.Height + 4),
-						Color.FromArgb(85, waveCol),
-						Color.FromArgb(4, waveCol),
-						LinearGradientMode.Vertical))
+					PointF p0 = seg[0];
+					if (hist.Count == 1)
 					{
-						g.FillPath(lgb, fillPath);
+						PointF p1 = new PointF(plot.Right, p0.Y);
+						DrawWaveSegment(g, plot, new PointF[] { p0, p1 }, waveCol);
+						lastValidPt = p1;
 					}
-
-					using (Pen penGlow = new Pen(Color.FromArgb(70, waveCol), DpiHelper.Sf(4.2f)))
+					else
 					{
-						penGlow.LineJoin = LineJoin.Round;
-						g.DrawPath(penGlow, wavePath);
+						float rIso = DpiHelper.Sf(3.0f);
+						using (SolidBrush brIso = new SolidBrush(Color.FromArgb(200, waveCol)))
+						{
+							g.FillEllipse(brIso, p0.X - rIso, p0.Y - rIso, rIso * 2, rIso * 2);
+						}
+						lastValidPt = p0;
 					}
-					using (Pen penWave = new Pen(waveCol, DpiHelper.Sf(1.9f)))
-					{
-						penWave.LineJoin = LineJoin.Round;
-						g.DrawPath(penWave, wavePath);
-					}
-
-					// Latest point glowing indicator
-					PointF last = arr[arr.Length - 1];
-					float rHalo = DpiHelper.Sf(5f);
-					float rDot = DpiHelper.Sf(2.8f);
-					using (SolidBrush brHalo = new SolidBrush(Color.FromArgb(85, waveCol)))
-					{
-						g.FillEllipse(brHalo, last.X - rHalo, last.Y - rHalo, rHalo * 2, rHalo * 2);
-					}
-					using (SolidBrush brDot = new SolidBrush(Color.White))
-					{
-						g.FillEllipse(brDot, last.X - rDot, last.Y - rDot, rDot * 2, rDot * 2);
-					}
+					hasLastValid = true;
+				}
+				else if (seg.Count >= 2)
+				{
+					PointF[] arr = seg.ToArray();
+					DrawWaveSegment(g, plot, arr, waveCol);
+					lastValidPt = arr[arr.Length - 1];
+					hasLastValid = true;
 				}
 			}
+
+			if (latest < 0)
+			{
+				float dropX = plot.Left + Math.Max(0, hist.Count - 1) * stepX;
+				float dropY = plot.Bottom - DpiHelper.Sf(4f);
+				float rHalo = DpiHelper.Sf(5f);
+				float rDot = DpiHelper.Sf(2.6f);
+				using (SolidBrush brErrHalo = new SolidBrush(Color.FromArgb(95, ErrColor)))
+				{
+					g.FillEllipse(brErrHalo, dropX - rHalo, dropY - rHalo, rHalo * 2, rHalo * 2);
+				}
+				using (SolidBrush brErrDot = new SolidBrush(ErrColor))
+				{
+					g.FillEllipse(brErrDot, dropX - rDot, dropY - rDot, rDot * 2, rDot * 2);
+				}
+			}
+			else if (hasLastValid)
+			{
+				float rHalo = DpiHelper.Sf(5f);
+				float rDot = DpiHelper.Sf(2.8f);
+				using (SolidBrush brHalo = new SolidBrush(Color.FromArgb(85, waveCol)))
+				{
+					g.FillEllipse(brHalo, lastValidPt.X - rHalo, lastValidPt.Y - rHalo, rHalo * 2, rHalo * 2);
+				}
+				using (SolidBrush brDot = new SolidBrush(Color.White))
+				{
+					g.FillEllipse(brDot, lastValidPt.X - rDot, lastValidPt.Y - rDot, rDot * 2, rDot * 2);
+				}
+			}
+		}
+		else
+		{
+			// All samples timed out -> draw baseline packet loss markers + clear overlay
+			int slots = Math.Max(hist.Count, 2);
+			float stepX = (float)plot.Width / Math.Max(1, slots - 1);
+			using (Pen pDrop = new Pen(Color.FromArgb(150, ErrColor), DpiHelper.Sf(1.5f)))
+			{
+				for (int i = 0; i < hist.Count; i++)
+				{
+					float x = plot.Left + i * stepX;
+					g.DrawLine(pDrop, x, plot.Bottom - DpiHelper.S(5), x, plot.Bottom);
+				}
+			}
+			string offTxt = CompactMode ? "NO RESPONSE" : "NO RESPONSE / PACKET LOSS 100%";
+			TextRenderer.DrawText(g, offTxt, fSmall, plot, Color.FromArgb(220, ErrColor),
+				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 		}
 
 		// Footer stats (Full Mode)
@@ -229,6 +270,47 @@ internal class SparklineGraph : Control
 			TextRenderer.DrawText(g, statTxt, fSmall,
 				new Rectangle(padX, h - footerH - DpiHelper.S(2), w - padX * 2, footerH),
 				stCol, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+		}
+	}
+
+	private static void DrawWaveSegment(Graphics g, Rectangle plot, PointF[] arr, Color waveCol)
+	{
+		using (GraphicsPath wavePath = new GraphicsPath())
+		using (GraphicsPath fillPath = new GraphicsPath())
+		{
+			if (arr.Length == 2)
+			{
+				wavePath.AddLine(arr[0], arr[1]);
+				fillPath.AddLine(arr[0], arr[1]);
+			}
+			else
+			{
+				wavePath.AddCurve(arr, 0.35f);
+				fillPath.AddCurve(arr, 0.35f);
+			}
+
+			fillPath.AddLine(arr[arr.Length - 1].X, plot.Bottom, arr[0].X, plot.Bottom);
+			fillPath.CloseFigure();
+
+			using (LinearGradientBrush lgb = new LinearGradientBrush(
+				new Rectangle(plot.Left, plot.Top - 2, plot.Width, plot.Height + 4),
+				Color.FromArgb(85, waveCol),
+				Color.FromArgb(4, waveCol),
+				LinearGradientMode.Vertical))
+			{
+				g.FillPath(lgb, fillPath);
+			}
+
+			using (Pen penGlow = new Pen(Color.FromArgb(70, waveCol), DpiHelper.Sf(4.2f)))
+			{
+				penGlow.LineJoin = LineJoin.Round;
+				g.DrawPath(penGlow, wavePath);
+			}
+			using (Pen penWave = new Pen(waveCol, DpiHelper.Sf(1.9f)))
+			{
+				penWave.LineJoin = LineJoin.Round;
+				g.DrawPath(penWave, wavePath);
+			}
 		}
 	}
 

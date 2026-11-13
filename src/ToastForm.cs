@@ -16,11 +16,7 @@ internal class ToastForm : Form
 		base.ShowInTaskbar = false;
 		base.TopMost = true;
 		base.StartPosition = FormStartPosition.Manual;
-		base.Size = new Size(400, 136);
 		BackColor = Color.FromArgb(17, 17, 24);
-		Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
-		base.Location = new Point(workingArea.Right - base.Width - 24, workingArea.Bottom - base.Height - 24);
-		base.Region = new Region(RoundRectP(new Rectangle(0, 0, base.Width, base.Height), 14));
 		Label value = new Label
 		{
 			Text = "\ud83d\udd14  " + title,
@@ -64,6 +60,13 @@ internal class ToastForm : Form
 			Close();
 		};
 		base.Controls.Add(roundedBtn2);
+		DpiHelper.ScaleControlTree(this);
+		base.Size = DpiHelper.Sz(400, 136);
+		Screen scr = Screen.FromPoint(Cursor.Position);
+		Rectangle workingArea = (scr != null) ? scr.WorkingArea : Screen.PrimaryScreen.WorkingArea;
+		int margin = DpiHelper.S(24);
+		base.Location = new Point(workingArea.Right - base.Width - margin, workingArea.Bottom - base.Height - margin);
+		base.Region = new Region(RoundRectP(new Rectangle(0, 0, base.Width, base.Height), DpiHelper.S(14)));
 		autoClose = new Timer();
 		autoClose.Interval = 9000;
 		autoClose.Tick += delegate
@@ -104,7 +107,12 @@ internal class ToastForm : Form
 	private static GraphicsPath RoundRectP(Rectangle r, int rad)
 	{
 		GraphicsPath graphicsPath = new GraphicsPath();
-		int num = rad * 2;
+		int num = Math.Min(rad * 2, Math.Min(Math.Max(1, r.Width), Math.Max(1, r.Height)));
+		if (num < 2)
+		{
+			graphicsPath.AddRectangle(r);
+			return graphicsPath;
+		}
 		graphicsPath.AddArc(r.X, r.Y, num, num, 180f, 90f);
 		graphicsPath.AddArc(r.Right - num, r.Y, num, num, 270f, 90f);
 		graphicsPath.AddArc(r.Right - num, r.Bottom - num, num, num, 0f, 90f);
