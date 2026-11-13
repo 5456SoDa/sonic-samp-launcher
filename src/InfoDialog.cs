@@ -149,6 +149,7 @@ internal class InfoDialog : Form
 		};
 		lv.DrawColumnHeader += delegate(object sender, DrawListViewColumnHeaderEventArgs ev)
 		{
+			ev.DrawDefault = false;
 			using (SolidBrush brHdr = new SolidBrush(Color.FromArgb(20, 25, 38)))
 			{
 				ev.Graphics.FillRectangle(brHdr, ev.Bounds);
@@ -158,21 +159,26 @@ internal class InfoDialog : Form
 				ev.Graphics.DrawLine(penLine, ev.Bounds.Left, ev.Bounds.Bottom - 1, ev.Bounds.Right, ev.Bounds.Bottom - 1);
 			}
 			Rectangle textBounds = new Rectangle(ev.Bounds.X + DpiHelper.S(6), ev.Bounds.Y, Math.Max(1, ev.Bounds.Width - DpiHelper.S(10)), ev.Bounds.Height);
-			TextRenderer.DrawText(ev.Graphics, ev.Header.Text, fHeader, textBounds, Color.FromArgb(145, 180, 215), TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+			TextRenderer.DrawText(ev.Graphics, ev.Header.Text, fHeader, textBounds, Color.FromArgb(145, 180, 215), TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 		};
 		lv.DrawItem += delegate(object sender, DrawListViewItemEventArgs ev)
 		{
-			Color bgCol = ev.Item.Selected ? Color.FromArgb(34, 62, 92) : ((ev.ItemIndex % 2 == 0) ? Color.FromArgb(24, 26, 38) : Color.FromArgb(28, 31, 45));
-			using (SolidBrush brRow = new SolidBrush(bgCol))
-			{
-				ev.Graphics.FillRectangle(brRow, ev.Bounds);
-			}
+			ev.DrawDefault = false;
 		};
 		lv.DrawSubItem += delegate(object sender, DrawListViewSubItemEventArgs ev)
 		{
+			ev.DrawDefault = false;
+			Rectangle cellBounds = (ev.ColumnIndex == 0 && lv.Columns.Count > 0)
+				? new Rectangle(ev.Bounds.X, ev.Bounds.Y, Math.Min(ev.Bounds.Width, lv.Columns[0].Width), ev.Bounds.Height)
+				: ev.Bounds;
+			Color bgCol = ev.Item.Selected ? Color.FromArgb(34, 62, 92) : ((ev.ItemIndex % 2 == 0) ? Color.FromArgb(24, 26, 38) : Color.FromArgb(28, 31, 45));
+			using (SolidBrush brRow = new SolidBrush(bgCol))
+			{
+				ev.Graphics.FillRectangle(brRow, cellBounds);
+			}
 			Color fgCol = ev.Item.Selected ? Color.White : Color.FromArgb(228, 234, 245);
-			Rectangle textBounds = new Rectangle(ev.Bounds.X + DpiHelper.S(6), ev.Bounds.Y, Math.Max(1, ev.Bounds.Width - DpiHelper.S(10)), ev.Bounds.Height);
-			TextRenderer.DrawText(ev.Graphics, ev.SubItem.Text, lv.Font, textBounds, fgCol, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+			Rectangle textBounds = new Rectangle(cellBounds.X + DpiHelper.S(6), cellBounds.Y, Math.Max(1, cellBounds.Width - DpiHelper.S(10)), cellBounds.Height);
+			TextRenderer.DrawText(ev.Graphics, ev.SubItem.Text, lv.Font, textBounds, fgCol, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 		};
 	}
 

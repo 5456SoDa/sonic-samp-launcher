@@ -470,6 +470,19 @@ pub extern "C" fn core_ui_apply_dwm(hwnd: usize) -> bool {
 }
 
 #[no_mangle]
+pub extern "C" fn core_ui_set_accent(hwnd: usize, r: u8, g: u8, b: u8) -> bool {
+    catch_unwind(AssertUnwindSafe(|| dwm::set_dwm_accent(hwnd, r, g, b))).unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn core_ui_style_listview(hwnd: usize, header_bg_rgb: u32, accent_rgb: u32) -> bool {
+    catch_unwind(AssertUnwindSafe(|| {
+        dwm::style_listview(hwnd, header_bg_rgb, accent_rgb)
+    }))
+    .unwrap_or(false)
+}
+
+#[no_mangle]
 pub extern "C" fn core_ping_spark_start(ip: *const c_char, port: u16) {
     let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
         if let Some(host) = read_cstr(ip).filter(|s| !s.is_empty()) {

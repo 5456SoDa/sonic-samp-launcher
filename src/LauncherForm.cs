@@ -187,6 +187,7 @@ internal partial class LauncherForm : Form
 	private RoundedBtn btnWinClose;
 	private bool dwmApplied;
 	private bool uiBuilt;
+	private List<Label> accentLabels = new List<Label>();
 
 	private System.Windows.Forms.Timer sparkPollTimer;
 	private string activeSparkHost = "";
@@ -261,7 +262,6 @@ internal partial class LauncherForm : Form
 		DpiHelper.ScaleControlTree(this);
 		uiBuilt = true;
 		PerformResponsiveLayout();
-		UpdateRegion();
 		LoadConfig();
 	}
 
@@ -269,6 +269,8 @@ internal partial class LauncherForm : Form
 	{
 		base.OnHandleCreated(e);
 		dwmApplied = core.ApplyDwm(base.Handle);
+		core.SetDwmAccent(base.Handle, colAccent);
+		StyleAllListViews();
 		UpdateRegion();
 	}
 
@@ -286,15 +288,21 @@ internal partial class LauncherForm : Form
 
 	private void UpdateRegion()
 	{
-		if (base.WindowState == FormWindowState.Maximized)
+		if (base.WindowState == FormWindowState.Maximized || dwmApplied)
 		{
-			base.Region = null;
+			if (base.Region != null)
+			{
+				base.Region = null;
+			}
 			return;
 		}
 		bool isWin11OrNewer = Environment.OSVersion.Version.Major >= 10 && Environment.OSVersion.Version.Build >= 22000;
-		if (dwmApplied && isWin11OrNewer)
+		if (isWin11OrNewer && base.IsHandleCreated)
 		{
-			base.Region = null;
+			if (base.Region != null)
+			{
+				base.Region = null;
+			}
 			return;
 		}
 		base.Region = new Region(RoundRect(new Rectangle(0, 0, base.Width, base.Height), DpiHelper.S(14)));
@@ -936,7 +944,8 @@ internal partial class LauncherForm : Form
 	private Label AddLbl(Control host, string text, Font f, int x, int y, Color c)
 	{
 		Label label = new Label();
-		label.Text = text;
+		label.UseMnemonic = false;
+		label.Text = (text ?? "").Replace("\uFE0F", "");
 		label.Font = f;
 		label.ForeColor = c;
 		label.BackColor = Color.Transparent;
@@ -944,6 +953,10 @@ internal partial class LauncherForm : Form
 		label.AutoSize = true;
 		label.MouseDown += DragWindow;
 		host.Controls.Add(label);
+		if (c == colAccent)
+		{
+			accentLabels.Add(label);
+		}
 		return label;
 	}
 
@@ -1066,6 +1079,35 @@ internal partial class LauncherForm : Form
 		StyleNav(btnNavMods, pnlMods.Visible);
 		if (heroSpark != null) { heroSpark.AccentColor = c; heroSpark.Invalidate(); }
 		if (detSpark != null) { detSpark.AccentColor = c; detSpark.Invalidate(); }
+		foreach (Label lbl in accentLabels)
+		{
+			if (lbl != null && !lbl.IsDisposed)
+			{
+				lbl.ForeColor = c;
+			}
+		}
+		if (lblHeroIp != null) lblHeroIp.ForeColor = c;
+		if (lblDetIp != null) lblDetIp.ForeColor = c;
+		if (btnSetBrowse != null) btnSetBrowse.BorderColor = c;
+		if (btnSetModFolder != null) btnSetModFolder.BorderColor = c;
+		if (btnHealthRecheck != null) btnHealthRecheck.BorderColor = c;
+		if (btnSetTestSound != null) btnSetTestSound.BorderColor = c;
+		if (btnSrvAdd != null) btnSrvAdd.BorderColor = c;
+		if (btnSrvInfo != null) btnSrvInfo.BorderColor = c;
+		if (btnRconSend != null) btnRconSend.BorderColor = c;
+		UpdateSkyGfxButtons();
+		UpdateServerModeTabs();
+		UpdateFilterChipsStyle();
+		UpdateDetTabStyle();
+		UpdateRefreshButtonState();
+		RebuildChips();
+		if (base.IsHandleCreated)
+		{
+			core.SetDwmAccent(base.Handle, c);
+			StyleAllListViews();
+		}
+		if (lstSrv != null) lstSrv.Invalidate();
+		if (lvDetList != null) lvDetList.Invalidate();
 		Invalidate();
 	}
 
@@ -1133,11 +1175,25 @@ internal partial class LauncherForm : Form
 	{
 		const int WM_NCCALCSIZE = 0x0083;
 		const int WM_NCHITTEST = 0x0084;
+		const int WM_NCPAINT = 0x0085;
+		const int WM_NCACTIVATE = 0x0086;
+		const int WM_NCUAHDRAWCAPTION = 0x00AE;
+		const int WM_NCUAHDRAWFRAME = 0x00AF;
 		const int WM_COPYDATA = 0x004A;
 
-		if (m.Msg == WM_NCCALCSIZE && m.WParam != IntPtr.Zero)
+		if (m.Msg == WM_NCACTIVATE)
 		{
-			if (IsZoomed(base.Handle))
+			m.Result = (IntPtr)1;
+			return;
+		}
+		if (m.Msg == WM_NCPAINT || m.Msg == WM_NCUAHDRAWCAPTION || m.Msg == WM_NCUAHDRAWFRAME)
+		{
+			m.Result = IntPtr.Zero;
+			return;
+		}
+		if (m.Msg == WM_NCCALCSIZE)
+		{
+			if (m.WParam != IntPtr.Zero && IsZoomed(base.Handle))
 			{
 				RECT rc = (RECT)Marshal.PtrToStructure(m.LParam, typeof(RECT));
 				int cx = GetSystemMetrics(32) + GetSystemMetrics(92); // SM_CXSIZEFRAME + SM_CXPADDEDBORDER

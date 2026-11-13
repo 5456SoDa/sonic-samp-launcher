@@ -4,6 +4,16 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
+internal enum BtnIcon
+{
+	None,
+	Refresh,
+	StatsBar,
+	CopyDual,
+	StarFilled,
+	StarOutline
+}
+
 internal class RoundedBtn : Control, IButtonControl
 {
 	private Color cBase;
@@ -39,6 +49,20 @@ internal class RoundedBtn : Control, IButtonControl
 	private bool pulseGlow;
 	private Timer pulseTmr;
 	private float pulsePhase;
+	private BtnIcon iconGlyph = BtnIcon.None;
+
+	public BtnIcon IconGlyph
+	{
+		get { return iconGlyph; }
+		set
+		{
+			if (iconGlyph != value)
+			{
+				iconGlyph = value;
+				Invalidate();
+			}
+		}
+	}
 
 	public bool PulseGlow
 	{
@@ -261,13 +285,114 @@ internal class RoundedBtn : Control, IButtonControl
 		{
 			bounds.Offset(0, 1);
 		}
-		TextFormatFlags flags = (TextFormatFlags)(((!alignLeft) ? 1u : 0u) | 4u | 0x20);
-		if (alignLeft)
+		if (iconGlyph != BtnIcon.None)
 		{
-			int leftPad = DpiHelper.S(14);
-			bounds = new Rectangle(leftPad, 0, Math.Max(10, base.Width - leftPad - DpiHelper.S(4)), base.Height);
+			DrawVectorIcon(graphics, bounds, foreColor);
 		}
-		TextRenderer.DrawText(graphics, Text, Font, bounds, foreColor, flags);
+		else
+		{
+			TextFormatFlags flags = (alignLeft ? TextFormatFlags.Left : TextFormatFlags.HorizontalCenter)
+				| TextFormatFlags.VerticalCenter
+				| TextFormatFlags.EndEllipsis
+				| TextFormatFlags.NoPrefix
+				| TextFormatFlags.NoPadding;
+			if (alignLeft)
+			{
+				int leftPad = DpiHelper.S(14);
+				bounds = new Rectangle(leftPad, 0, Math.Max(10, base.Width - leftPad - DpiHelper.S(4)), base.Height);
+			}
+			string cleanText = (Text ?? "").Replace("\uFE0F", "");
+			TextRenderer.DrawText(graphics, cleanText, Font, bounds, foreColor, flags);
+		}
+	}
+
+	private void DrawVectorIcon(Graphics g, Rectangle bounds, Color foreColor)
+	{
+		float sc = Math.Max(0.7f, Math.Min(bounds.Width, bounds.Height) / 26.0f);
+		float cx = bounds.X + bounds.Width * 0.5f;
+		float cy = bounds.Y + bounds.Height * 0.5f;
+		float stroke = Math.Max(1.35f, 1.65f * sc);
+
+		if (iconGlyph == BtnIcon.Refresh)
+		{
+			float r = 5.6f * sc;
+			using (Pen p = new Pen(foreColor, stroke))
+			{
+				p.StartCap = LineCap.Round;
+				p.EndCap = LineCap.Round;
+				g.DrawArc(p, cx - r, cy - r, r * 2f, r * 2f, -45f, 275f);
+			}
+			float ax = cx + r * 0.72f;
+			float ay = cy - r * 0.70f;
+			PointF[] tri = new PointF[3]
+			{
+				new PointF(ax + 0.5f * sc, ay + 1.8f * sc),
+				new PointF(ax + 2.2f * sc, ay - 2.6f * sc),
+				new PointF(ax - 2.3f * sc, ay - 1.2f * sc)
+			};
+			using (SolidBrush br = new SolidBrush(foreColor))
+			{
+				g.FillPolygon(br, tri);
+			}
+		}
+		else if (iconGlyph == BtnIcon.StatsBar)
+		{
+			float bw = Math.Max(2f, 2.3f * sc);
+			float gap = 1.8f * sc;
+			float startX = cx - (bw * 3f + gap * 2f) * 0.5f;
+			float baseY = cy + 5.6f * sc;
+			float[] hs = new float[3] { 5.2f * sc, 8.6f * sc, 11.4f * sc };
+			using (SolidBrush br = new SolidBrush(foreColor))
+			{
+				for (int i = 0; i < 3; i++)
+				{
+					float bx = startX + i * (bw + gap);
+					g.FillRectangle(br, bx, baseY - hs[i], bw, hs[i]);
+				}
+				g.FillRectangle(br, startX - 1f * sc, baseY + 0.5f * sc, bw * 3f + gap * 2f + 2f * sc, Math.Max(1f, 1.2f * sc));
+			}
+		}
+		else if (iconGlyph == BtnIcon.CopyDual)
+		{
+			float w = 7.4f * sc;
+			float h = 9.0f * sc;
+			RectangleF rBack = new RectangleF(cx - w * 0.5f - 2.0f * sc, cy - h * 0.5f - 2.0f * sc, w, h);
+			RectangleF rFront = new RectangleF(cx - w * 0.5f + 2.0f * sc, cy - h * 0.5f + 2.0f * sc, w, h);
+			using (Pen p = new Pen(foreColor, Math.Max(1.25f, 1.45f * sc)))
+			using (SolidBrush bg = new SolidBrush(cCur))
+			{
+				g.DrawRectangle(p, rBack.X, rBack.Y, rBack.Width, rBack.Height);
+				g.FillRectangle(bg, rFront);
+				g.DrawRectangle(p, rFront.X, rFront.Y, rFront.Width, rFront.Height);
+			}
+		}
+		else if (iconGlyph == BtnIcon.StarFilled || iconGlyph == BtnIcon.StarOutline)
+		{
+			PointF[] pts = new PointF[10];
+			float outerR = 6.7f * sc;
+			float innerR = 2.8f * sc;
+			for (int i = 0; i < 10; i++)
+			{
+				double ang = -Math.PI * 0.5 + i * (Math.PI / 5.0);
+				float rad = (i % 2 == 0) ? outerR : innerR;
+				pts[i] = new PointF(cx + (float)(Math.Cos(ang) * rad), cy + (float)(Math.Sin(ang) * rad));
+			}
+			if (iconGlyph == BtnIcon.StarFilled)
+			{
+				using (SolidBrush br = new SolidBrush(foreColor))
+				{
+					g.FillPolygon(br, pts);
+				}
+			}
+			else
+			{
+				using (Pen p = new Pen(foreColor, Math.Max(1.25f, 1.4f * sc)))
+				{
+					p.LineJoin = LineJoin.Round;
+					g.DrawPolygon(p, pts);
+				}
+			}
+		}
 	}
 
 	private GraphicsPath Rp(Rectangle r)

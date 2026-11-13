@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Web.Script.Serialization;
@@ -100,6 +101,14 @@ internal class RustCore : ICore
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	[return: MarshalAs(UnmanagedType.U1)]
 	private static extern bool core_ui_apply_dwm(IntPtr hwnd);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	[return: MarshalAs(UnmanagedType.U1)]
+	private static extern bool core_ui_set_accent(IntPtr hwnd, byte r, byte g, byte b);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	[return: MarshalAs(UnmanagedType.U1)]
+	private static extern bool core_ui_style_listview(IntPtr hwnd, uint headerBgRgb, uint accentRgb);
 
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	private static extern void core_ping_spark_start(byte[] ip, ushort port);
@@ -838,6 +847,35 @@ internal class RustCore : ICore
 		try
 		{
 			return core_ui_apply_dwm(hWnd);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static uint PackRgb(Color c)
+	{
+		return (uint)((c.R << 16) | (c.G << 8) | c.B);
+	}
+
+	public bool SetDwmAccent(IntPtr hWnd, Color accent)
+	{
+		try
+		{
+			return core_ui_set_accent(hWnd, accent.R, accent.G, accent.B);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	public bool StyleListView(IntPtr lvHwnd, Color headerBg, Color accent)
+	{
+		try
+		{
+			return core_ui_style_listview(lvHwnd, PackRgb(headerBg), PackRgb(accent));
 		}
 		catch
 		{

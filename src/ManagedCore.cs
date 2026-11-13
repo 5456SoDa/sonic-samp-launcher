@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -929,6 +930,16 @@ internal class ManagedCore : ICore
 	}
 
 	public bool ApplyDwm(IntPtr hWnd)
+	{
+		return false;
+	}
+
+	public bool SetDwmAccent(IntPtr hWnd, Color accent)
+	{
+		return false;
+	}
+
+	public bool StyleListView(IntPtr lvHwnd, Color headerBg, Color accent)
 	{
 		return false;
 	}

@@ -49,9 +49,16 @@ internal partial class LauncherForm
 	private bool detRulesFailed = false;
 	private DateTime lastMineScanUtc = DateTime.MinValue;
 	private int activeScanGen = 0;
+	private string mineSubFilter = "all";
+	private RoundedBtn btnMAll;
+	private RoundedBtn btnMFav;
+	private RoundedBtn btnMHist;
+	private RoundedBtn btnSrvFav;
+	private ToolTip srvToolTip;
 
 	private void BuildSrvPage()
 	{
+		srvToolTip = new ToolTip();
 		// Top Search & Filter Bar
 		txtSearch = AddField(pnlSrv, "🔍  ค้นหาเซิร์ฟเวอร์ (ชื่อ / IP)...", 0, 0, 416);
 		txtSearch.TextChanged += delegate
@@ -94,37 +101,59 @@ internal partial class LauncherForm
 		};
 		pnlSrv.Controls.Add(btnRefreshAll);
 
-		// Filter Chips (shown when public mode is selected)
-		btnF1 = MakeMiniBtn("ซ่อนเต็ม", 0, 48, 96, 26);
-		btnF2 = MakeMiniBtn("ซ่อนคน 0", 102, 48, 96, 26);
-		btnF3 = MakeMiniBtn("ซ่อนมีรหัส", 204, 48, 108, 26);
+		// Filter Chips (shown consistently in both mine and public modes so table never jumps)
+		btnMAll = MakeMiniBtn("ทั้งหมด", 0, 46, 66, 26);
+		btnMFav = MakeMiniBtn("★ โปรด", 72, 46, 74, 26);
+		btnMHist = MakeMiniBtn("ประวัติ", 152, 46, 66, 26);
+		btnF1 = MakeMiniBtn("ซ่อนเต็ม", 224, 46, 74, 26);
+		btnF2 = MakeMiniBtn("ซ่อนคน 0", 304, 46, 82, 26);
+		btnF3 = MakeMiniBtn("ซ่อนมีรหัส", 392, 46, 90, 26);
+
+		btnMAll.Click += delegate
+		{
+			mineSubFilter = "all";
+			UpdateFilterChipsStyle();
+			RebuildList();
+		};
+		btnMFav.Click += delegate
+		{
+			mineSubFilter = "fav";
+			UpdateFilterChipsStyle();
+			RebuildList();
+		};
+		btnMHist.Click += delegate
+		{
+			mineSubFilter = "hist";
+			UpdateFilterChipsStyle();
+			RebuildList();
+		};
 		btnF1.Click += delegate
 		{
 			fHideFull = !fHideFull;
-			StyleChip(btnF1, fHideFull);
+			UpdateFilterChipsStyle();
 			RebuildList();
 		};
 		btnF2.Click += delegate
 		{
 			fHideEmpty = !fHideEmpty;
-			StyleChip(btnF2, fHideEmpty);
+			UpdateFilterChipsStyle();
 			RebuildList();
 		};
 		btnF3.Click += delegate
 		{
 			fHideLocked = !fHideLocked;
-			StyleChip(btnF3, fHideLocked);
+			UpdateFilterChipsStyle();
 			RebuildList();
 		};
-		StyleChip(btnF1, false);
-		StyleChip(btnF2, false);
-		StyleChip(btnF3, false);
-		btnF1.Visible = false;
-		btnF2.Visible = false;
-		btnF3.Visible = false;
+
+		pnlSrv.Controls.Add(btnMAll);
+		pnlSrv.Controls.Add(btnMFav);
+		pnlSrv.Controls.Add(btnMHist);
 		pnlSrv.Controls.Add(btnF1);
 		pnlSrv.Controls.Add(btnF2);
 		pnlSrv.Controls.Add(btnF3);
+		UpdateServerModeTabs();
+		UpdateFilterChipsStyle();
 
 		// Left Pane: Server ListView (W~432 in 756 base)
 		lstSrv = new ListView();
@@ -138,14 +167,23 @@ internal partial class LauncherForm
 		lstSrv.MultiSelect = false;
 		lstSrv.ShowItemToolTips = true;
 		lstSrv.OwnerDraw = true;
-		lstSrv.Location = new Point(0, 48);
-		lstSrv.Size = new Size(432, 344);
+		lstSrv.Location = new Point(0, 78);
+		lstSrv.Size = new Size(432, 314);
 		lstSrv.SmallImageList = new ImageList();
 		lstSrv.SmallImageList.ImageSize = new Size(1, 46);
 		lstSrv.Columns.Add("ชื่อเซิร์ฟเวอร์", 198);
-		lstSrv.Columns.Add("ผู้เล่น", 78);
-		lstSrv.Columns.Add("Ping", 74);
+		lstSrv.Columns.Add("ผู้เล่น", 76);
+		lstSrv.Columns.Add("Ping", 82);
 		lstSrv.Columns.Add("ประเภท", 76);
+		lstSrv.HandleCreated += delegate
+		{
+			StyleAllListViews();
+			ResizeSrvColumns();
+		};
+		lstSrv.ClientSizeChanged += delegate
+		{
+			ResizeSrvColumns();
+		};
 		lstSrv.SelectedIndexChanged += delegate
 		{
 			SelectSelectedServer(false);
@@ -199,6 +237,7 @@ internal partial class LauncherForm
 		pnlSrv.Controls.Add(lstSrv);
 
 		emptyLbl = new Label();
+		emptyLbl.UseMnemonic = false;
 		emptyLbl.Text = "ยังไม่มีเซิร์ฟเวอร์ในรายการ";
 		emptyLbl.Font = fField;
 		emptyLbl.ForeColor = colSub;
@@ -211,7 +250,7 @@ internal partial class LauncherForm
 		lstSrv.Controls.Add(emptyLbl);
 
 		// Left Bottom Action Bar
-		btnSrvAdd = MakeMiniBtn("+  เพิ่ม", 0, 400, 76, 40);
+		btnSrvAdd = MakeMiniBtn("+  เพิ่ม", 0, 400, 68, 40);
 		btnSrvAdd.BorderColor = colAccent;
 		btnSrvAdd.Click += delegate
 		{
@@ -219,7 +258,15 @@ internal partial class LauncherForm
 		};
 		pnlSrv.Controls.Add(btnSrvAdd);
 
-		btnSrvDel = MakeMiniBtn("−  ลบ", 82, 400, 70, 40);
+		btnSrvFav = MakeMiniBtn("★  โปรด", 74, 400, 72, 40);
+		btnSrvFav.BorderColor = Color.FromArgb(40, 60, 95);
+		btnSrvFav.Click += delegate
+		{
+			ToggleFavoriteSelected();
+		};
+		pnlSrv.Controls.Add(btnSrvFav);
+
+		btnSrvDel = MakeMiniBtn("−  ลบ", 152, 400, 62, 40);
 		btnSrvDel.BorderColor = Color.FromArgb(40, 60, 95);
 		btnSrvDel.Click += delegate
 		{
@@ -227,7 +274,7 @@ internal partial class LauncherForm
 		};
 		pnlSrv.Controls.Add(btnSrvDel);
 
-		btnSrvInfo = MakeMiniBtn("ℹ  ข้อมูล", 158, 400, 84, 40);
+		btnSrvInfo = MakeMiniBtn("ℹ  ข้อมูล", 220, 400, 74, 40);
 		btnSrvInfo.BorderColor = colAccent;
 		btnSrvInfo.Click += delegate
 		{
@@ -235,7 +282,7 @@ internal partial class LauncherForm
 		};
 		pnlSrv.Controls.Add(btnSrvInfo);
 
-		btnWatch = MakeMiniBtn("🔔  เฝ้าดูที่ว่าง", 248, 400, 184, 40);
+		btnWatch = MakeMiniBtn("🔔  เฝ้าดูที่ว่าง", 300, 400, 132, 40);
 		btnWatch.BorderColor = Color.FromArgb(40, 60, 95);
 		btnWatch.Click += delegate
 		{
@@ -246,46 +293,51 @@ internal partial class LauncherForm
 		// Right Pane: Server Detail Card (Split View)
 		pnlSrvDetail = new SmoothPanel(colCard, 12);
 		pnlSrvDetail.BorderColor = Color.FromArgb(40, 60, 95);
-		pnlSrvDetail.Location = new Point(444, 48);
-		pnlSrvDetail.Size = new Size(312, 392);
+		pnlSrvDetail.Location = new Point(444, 78);
+		pnlSrvDetail.Size = new Size(312, 362);
 		pnlSrv.Controls.Add(pnlSrvDetail);
 
 		lblDetTitle = new Label();
+		lblDetTitle.UseMnemonic = false;
 		lblDetTitle.Text = "เลือกเซิร์ฟเวอร์ทางซ้าย";
 		lblDetTitle.Font = new Font("Segoe UI Semibold", 11f, FontStyle.Bold);
 		lblDetTitle.ForeColor = Color.White;
 		lblDetTitle.BackColor = Color.Transparent;
 		lblDetTitle.Location = new Point(12, 10);
-		lblDetTitle.Size = new Size(216, 24);
+		lblDetTitle.Size = new Size(156, 24);
 		lblDetTitle.AutoEllipsis = true;
 		pnlSrvDetail.Controls.Add(lblDetTitle);
 
-		btnDetRefresh = MakeMiniBtn("↻", 174, 10, 28, 26);
-		btnDetRefresh.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+		btnDetRefresh = MakeMiniBtn("", 174, 10, 26, 26);
+		btnDetRefresh.IconGlyph = BtnIcon.Refresh;
+		srvToolTip.SetToolTip(btnDetRefresh, "รีเฟรชข้อมูลเซิร์ฟเวอร์นี้");
 		btnDetRefresh.Click += delegate
 		{
 			RefreshSingleSelectedServer();
 		};
 		pnlSrvDetail.Controls.Add(btnDetRefresh);
 
-		btnDetStats = MakeMiniBtn("📊", 206, 10, 28, 26);
-		btnDetStats.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+		btnDetStats = MakeMiniBtn("", 204, 10, 26, 26);
+		btnDetStats.IconGlyph = BtnIcon.StatsBar;
+		srvToolTip.SetToolTip(btnDetStats, "ดูกราฟสถิติผู้เล่นย้อนหลัง");
 		btnDetStats.Click += delegate
 		{
 			ShowStats();
 		};
 		pnlSrvDetail.Controls.Add(btnDetStats);
 
-		btnDetCopy = MakeMiniBtn("⧉", 238, 10, 28, 26);
-		btnDetCopy.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+		btnDetCopy = MakeMiniBtn("", 234, 10, 26, 26);
+		btnDetCopy.IconGlyph = BtnIcon.CopyDual;
+		srvToolTip.SetToolTip(btnDetCopy, "คัดลอก IP:Port");
 		btnDetCopy.Click += delegate
 		{
 			CopySelectedIp();
 		};
 		pnlSrvDetail.Controls.Add(btnDetCopy);
 
-		btnDetFav = MakeMiniBtn("★", 270, 10, 28, 26);
-		btnDetFav.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
+		btnDetFav = MakeMiniBtn("", 264, 10, 26, 26);
+		btnDetFav.IconGlyph = BtnIcon.StarOutline;
+		srvToolTip.SetToolTip(btnDetFav, "เพิ่ม/ถอดรายการโปรด");
 		btnDetFav.Click += delegate
 		{
 			ToggleFavoriteSelected();
@@ -293,6 +345,7 @@ internal partial class LauncherForm
 		pnlSrvDetail.Controls.Add(btnDetFav);
 
 		lblDetIp = new Label();
+		lblDetIp.UseMnemonic = false;
 		lblDetIp.Text = "คลิกที่เซิร์ฟเวอร์เพื่อดู Ping และรายชื่อผู้เล่น";
 		lblDetIp.Font = fSmall;
 		lblDetIp.ForeColor = colAccent;
@@ -303,6 +356,7 @@ internal partial class LauncherForm
 		pnlSrvDetail.Controls.Add(lblDetIp);
 
 		lblDetMeta = new Label();
+		lblDetMeta.UseMnemonic = false;
 		lblDetMeta.Text = "";
 		lblDetMeta.Font = fSmall;
 		lblDetMeta.ForeColor = colSub;
@@ -352,6 +406,11 @@ internal partial class LauncherForm
 		lvDetList.Columns.Add("ชื่อผู้เล่น", 140);
 		lvDetList.Columns.Add("Score", 52);
 		lvDetList.Columns.Add("Ping", 52);
+		lvDetList.HandleCreated += delegate
+		{
+			StyleAllListViews();
+			ResizeDetColumns();
+		};
 		lvDetList.ColumnWidthChanging += delegate(object s, ColumnWidthChangingEventArgs ev)
 		{
 			int minW = DpiHelper.S(28);
@@ -372,6 +431,7 @@ internal partial class LauncherForm
 		pnlSrvDetail.Controls.Add(lvDetList);
 
 		lblDetEmpty = new Label();
+		lblDetEmpty.UseMnemonic = false;
 		lblDetEmpty.Text = "เลือกเซิร์ฟเวอร์ทางซ้ายเพื่อโหลดข้อมูล";
 		lblDetEmpty.Font = fSmall;
 		lblDetEmpty.ForeColor = colSub;
@@ -478,12 +538,24 @@ internal partial class LauncherForm
 		}
 	}
 
+	private void StyleAllListViews()
+	{
+		if (lstSrv != null && lstSrv.IsHandleCreated)
+		{
+			core.StyleListView(lstSrv.Handle, colSide, colAccent);
+		}
+		if (lvDetList != null && lvDetList.IsHandleCreated)
+		{
+			core.StyleListView(lvDetList.Handle, Color.FromArgb(20, 29, 46), colAccent);
+		}
+	}
+
 	private void LstSrv_DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e)
 	{
 		e.DrawDefault = false;
 		Graphics graphics = e.Graphics;
 		graphics.FillRectangle(brHeader, e.Bounds);
-		TextRenderer.DrawText(graphics, e.Header.Text, fSub, new Rectangle(e.Bounds.X + DpiHelper.S(10), e.Bounds.Y, Math.Max(1, e.Bounds.Width - DpiHelper.S(24)), e.Bounds.Height), colSub, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+		TextRenderer.DrawText(graphics, e.Header.Text, fSub, new Rectangle(e.Bounds.X + DpiHelper.S(10), e.Bounds.Y, Math.Max(1, e.Bounds.Width - DpiHelper.S(24)), e.Bounds.Height), colSub, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 		if (e.ColumnIndex == sortCol)
 		{
 			TextRenderer.DrawText(graphics, sortDesc ? "▼" : "▲", fSmall, new Point(e.Bounds.Right - DpiHelper.S(16), e.Bounds.Y + (e.Bounds.Height - DpiHelper.S(12)) / 2), colAccentHi);
@@ -493,58 +565,73 @@ internal partial class LauncherForm
 
 	private void LstSrv_DrawItem(object sender, DrawListViewItemEventArgs e)
 	{
+		// Background and selection are painted per-subitem in LstSrv_DrawSubItem so partial column redraws never erase sibling columns.
 		e.DrawDefault = false;
-		Graphics graphics = e.Graphics;
-		graphics.FillRectangle(brCard, e.Bounds);
-		if ((e.State & ListViewItemStates.Selected) != 0)
-		{
-			graphics.SmoothingMode = SmoothingMode.AntiAlias;
-			int mx = DpiHelper.S(3);
-			int my = DpiHelper.S(2);
-			Rectangle r = new Rectangle(e.Bounds.X + mx, e.Bounds.Y + my, Math.Max(2, e.Bounds.Width - mx * 2), Math.Max(2, e.Bounds.Height - my * 2));
-			using (GraphicsPath path = RoundRect(r, DpiHelper.S(8)))
-			{
-				graphics.FillPath(brSel, path);
-			}
-			graphics.FillRectangle(brAccentBar, r.X, r.Y + DpiHelper.S(6), Math.Max(2, DpiHelper.S(3)), Math.Max(2, r.Height - DpiHelper.S(12)));
-		}
 	}
 
 	private void LstSrv_DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
 	{
 		e.DrawDefault = false;
+		Graphics graphics = e.Graphics;
+		Rectangle cellBounds = (e.ColumnIndex == 0 && lstSrv != null && lstSrv.Columns.Count > 0)
+			? new Rectangle(e.Bounds.X, e.Bounds.Y, Math.Min(e.Bounds.Width, lstSrv.Columns[0].Width), e.Bounds.Height)
+			: e.Bounds;
+		graphics.FillRectangle(brCard, cellBounds);
+		bool flag = (e.ItemState & ListViewItemStates.Selected) != 0 || (e.Item != null && e.Item.Selected);
+		if (flag && e.Item != null)
+		{
+			Region oldClip = graphics.Clip;
+			graphics.SetClip(cellBounds);
+			graphics.SmoothingMode = SmoothingMode.AntiAlias;
+			Rectangle rowRect = e.Item.Bounds;
+			int mx = DpiHelper.S(3);
+			int my = DpiHelper.S(2);
+			Rectangle r = new Rectangle(rowRect.X + mx, rowRect.Y + my, Math.Max(2, rowRect.Width - mx * 2), Math.Max(2, rowRect.Height - my * 2));
+			using (GraphicsPath path = RoundRect(r, DpiHelper.S(8)))
+			{
+				graphics.FillPath(brSel, path);
+			}
+			if (e.ColumnIndex == 0)
+			{
+				graphics.FillRectangle(brAccentBar, r.X, r.Y + DpiHelper.S(6), Math.Max(2, DpiHelper.S(3)), Math.Max(2, r.Height - DpiHelper.S(12)));
+			}
+			graphics.Clip = oldClip;
+		}
 		ServerEntry serverEntry = e.Item.Tag as ServerEntry;
 		if (serverEntry == null)
 		{
 			return;
 		}
-		Graphics graphics = e.Graphics;
-		bool flag = (e.ItemState & ListViewItemStates.Selected) != 0;
 		Color foreColor = (flag ? colText : Color.FromArgb(215, 222, 238));
-		int num = e.Bounds.Y + e.Bounds.Height / 2;
+		int num = cellBounds.Y + cellBounds.Height / 2;
 		if (e.ColumnIndex == 0)
 		{
 			int padL = DpiHelper.S(12);
 			int padR = serverEntry.IsOpenMp ? DpiHelper.S(62) : (serverEntry.Locked ? DpiHelper.S(32) : DpiHelper.S(14));
 			string text = ((serverEntry.Name.Length > 0) ? serverEntry.Name : (serverEntry.Ip + ":" + serverEntry.Port));
-			TextRenderer.DrawText(graphics, text, fField, new Rectangle(e.Bounds.X + padL, e.Bounds.Y + DpiHelper.S(4), Math.Max(10, e.Bounds.Width - padL - padR), DpiHelper.S(22)), foreColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
-			TextRenderer.DrawText(graphics, serverEntry.Ip + ":" + serverEntry.Port, fSmall, new Rectangle(e.Bounds.X + padL, e.Bounds.Y + DpiHelper.S(24), Math.Max(10, e.Bounds.Width - padL - DpiHelper.S(8)), DpiHelper.S(18)), colSub, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+			TextRenderer.DrawText(graphics, text, fField, new Rectangle(cellBounds.X + padL, cellBounds.Y + DpiHelper.S(4), Math.Max(10, cellBounds.Width - padL - padR), DpiHelper.S(22)), foreColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+			TextRenderer.DrawText(graphics, serverEntry.Ip + ":" + serverEntry.Port, fSmall, new Rectangle(cellBounds.X + padL, cellBounds.Y + DpiHelper.S(24), Math.Max(10, cellBounds.Width - padL - DpiHelper.S(8)), DpiHelper.S(18)), colSub, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 			if (serverEntry.IsOpenMp)
 			{
-				TextRenderer.DrawText(graphics, "open.mp", fSmall, new Rectangle(e.Bounds.Right - DpiHelper.S(60), e.Bounds.Y + DpiHelper.S(4), DpiHelper.S(54), DpiHelper.S(20)), Color.FromArgb(0, 206, 201), TextFormatFlags.Right | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, "open.mp", fSmall, new Rectangle(cellBounds.Right - DpiHelper.S(60), cellBounds.Y + DpiHelper.S(4), DpiHelper.S(54), DpiHelper.S(20)), Color.FromArgb(0, 206, 201), TextFormatFlags.Right | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 			}
 			else if (serverEntry.Locked)
 			{
-				TextRenderer.DrawText(graphics, "\ud83d\udd12", fSmall, new Rectangle(e.Bounds.Right - DpiHelper.S(32), e.Bounds.Y + DpiHelper.S(4), DpiHelper.S(24), DpiHelper.S(20)), colSub, TextFormatFlags.Right | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, "\ud83d\udd12", fSmall, new Rectangle(e.Bounds.Right - DpiHelper.S(32), e.Bounds.Y + DpiHelper.S(4), DpiHelper.S(24), DpiHelper.S(20)), colSub, TextFormatFlags.Right | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 			}
 		}
 		else if (e.ColumnIndex == 1)
 		{
 			string text2 = ((serverEntry.Ping == -2) ? "-" : ((serverEntry.Players < 0) ? "-" : (serverEntry.Players + "/" + serverEntry.Max)));
 			Color foreColor2 = ((serverEntry.Players >= 0 && serverEntry.Max > 0 && serverEntry.Players >= serverEntry.Max) ? brPingY.Color : (flag ? colText : Color.FromArgb(200, 208, 224)));
-			TextRenderer.DrawText(graphics, text2, fSub, new Rectangle(e.Bounds.X + DpiHelper.S(6), e.Bounds.Y + DpiHelper.S(4), Math.Max(10, e.Bounds.Width - DpiHelper.S(10)), DpiHelper.S(22)), foreColor2, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
-			if (serverEntry.Players >= 0 && serverEntry.Max > 0)
+			bool hasBar = (serverEntry.Players >= 0 && serverEntry.Max > 0);
+			if (!hasBar)
 			{
+				TextRenderer.DrawText(graphics, text2, fSub, new Rectangle(e.Bounds.X + DpiHelper.S(4), e.Bounds.Y, Math.Max(10, e.Bounds.Width - DpiHelper.S(8)), e.Bounds.Height), foreColor2, TextFormatFlags.HorizontalCenter | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+			}
+			else
+			{
+				TextRenderer.DrawText(graphics, text2, fSub, new Rectangle(e.Bounds.X + DpiHelper.S(6), e.Bounds.Y + DpiHelper.S(4), Math.Max(10, e.Bounds.Width - DpiHelper.S(10)), DpiHelper.S(22)), foreColor2, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				int barX = e.Bounds.X + DpiHelper.S(6);
 				int barY = e.Bounds.Y + DpiHelper.S(30);
 				int barW = Math.Max(DpiHelper.S(18), e.Bounds.Width - DpiHelper.S(14));
@@ -573,13 +660,13 @@ internal partial class LauncherForm
 			int txX = e.Bounds.X + DpiHelper.S(20);
 			if (serverEntry.Ping == -2)
 			{
-				TextRenderer.DrawText(graphics, "...", fSub, new Rectangle(DpiHelper.S(6) + e.Bounds.X, e.Bounds.Y, Math.Max(10, e.Bounds.Width - DpiHelper.S(10)), e.Bounds.Height), colSub, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, "...", fSub, new Rectangle(DpiHelper.S(6) + e.Bounds.X, e.Bounds.Y, Math.Max(10, e.Bounds.Width - DpiHelper.S(10)), e.Bounds.Height), colSub, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 			}
 			else if (serverEntry.Ping < 0)
 			{
 				graphics.SmoothingMode = SmoothingMode.AntiAlias;
 				graphics.FillEllipse(brDotOff, dotX, dotY, dotSz, dotSz);
-				TextRenderer.DrawText(graphics, "ออฟ", fSub, new Rectangle(txX, e.Bounds.Y, Math.Max(10, e.Bounds.Right - txX - DpiHelper.S(4)), e.Bounds.Height), colSub, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, "ออฟไลน์", fSub, new Rectangle(txX, e.Bounds.Y, Math.Max(10, e.Bounds.Right - txX - DpiHelper.S(4)), e.Bounds.Height), colSub, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 			}
 			else
 			{
@@ -587,7 +674,7 @@ internal partial class LauncherForm
 				Color color = solidBrush.Color;
 				graphics.SmoothingMode = SmoothingMode.AntiAlias;
 				graphics.FillEllipse(solidBrush, dotX, dotY, dotSz, dotSz);
-				TextRenderer.DrawText(graphics, serverEntry.Ping + " ms", fSub, new Rectangle(txX, e.Bounds.Y, Math.Max(10, e.Bounds.Right - txX - DpiHelper.S(4)), e.Bounds.Height), color, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, serverEntry.Ping + " ms", fSub, new Rectangle(txX, e.Bounds.Y, Math.Max(10, e.Bounds.Right - txX - DpiHelper.S(4)), e.Bounds.Height), color, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 			}
 		}
 		else if (e.ColumnIndex == 3)
@@ -621,7 +708,7 @@ internal partial class LauncherForm
 			{
 				graphics.FillPath(brush, pp);
 			}
-			TextRenderer.DrawText(graphics, t, fSmall, rectangle, foreColor3, TextFormatFlags.HorizontalCenter | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+			TextRenderer.DrawText(graphics, t, fSmall, rectangle, foreColor3, TextFormatFlags.HorizontalCenter | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 		}
 	}
 
@@ -632,27 +719,30 @@ internal partial class LauncherForm
 		{
 			e.Graphics.FillRectangle(br, e.Bounds);
 		}
-		TextRenderer.DrawText(e.Graphics, e.Header.Text, fBadge, new Rectangle(e.Bounds.X + DpiHelper.S(6), e.Bounds.Y, Math.Max(1, e.Bounds.Width - DpiHelper.S(8)), e.Bounds.Height), colSub, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+		TextRenderer.DrawText(e.Graphics, e.Header.Text, fBadge, new Rectangle(e.Bounds.X + DpiHelper.S(6), e.Bounds.Y, Math.Max(1, e.Bounds.Width - DpiHelper.S(8)), e.Bounds.Height), colSub, TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 		e.Graphics.DrawLine(penHeaderLine, e.Bounds.X, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
 	}
 
 	private void LvDet_DrawItem(object sender, DrawListViewItemEventArgs e)
 	{
 		e.DrawDefault = false;
-		Color bg = ((e.ItemIndex % 2 == 1) ? Color.FromArgb(19, 27, 43) : colField);
-		if ((e.State & ListViewItemStates.Selected) != 0)
-		{
-			bg = Color.FromArgb(28, 44, 72);
-		}
-		using (SolidBrush br = new SolidBrush(bg))
-		{
-			e.Graphics.FillRectangle(br, e.Bounds);
-		}
 	}
 
 	private void LvDet_DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
 	{
 		e.DrawDefault = false;
+		Rectangle cellBounds = (e.ColumnIndex == 0 && lvDetList != null && lvDetList.Columns.Count > 0)
+			? new Rectangle(e.Bounds.X, e.Bounds.Y, Math.Min(e.Bounds.Width, lvDetList.Columns[0].Width), e.Bounds.Height)
+			: e.Bounds;
+		Color bg = ((e.ItemIndex % 2 == 1) ? Color.FromArgb(19, 27, 43) : colField);
+		if ((e.ItemState & ListViewItemStates.Selected) != 0 || (e.Item != null && e.Item.Selected))
+		{
+			bg = Color.FromArgb(28, 44, 72);
+		}
+		using (SolidBrush br = new SolidBrush(bg))
+		{
+			e.Graphics.FillRectangle(br, cellBounds);
+		}
 		Color fc;
 		if (detTabMode == 0)
 		{
@@ -671,9 +761,24 @@ internal partial class LauncherForm
 			fc = (e.ColumnIndex == 0) ? colText : colAccentHi;
 		}
 		TextFormatFlags flags = (detTabMode == 0 && e.ColumnIndex >= 2)
-			? (TextFormatFlags.Right | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis)
-			: (TextFormatFlags.Left | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-		TextRenderer.DrawText(e.Graphics, e.SubItem.Text, fSmall, new Rectangle(e.Bounds.X + DpiHelper.S(6), e.Bounds.Y, Math.Max(1, e.Bounds.Width - DpiHelper.S(12)), e.Bounds.Height), fc, flags);
+			? (TextFormatFlags.Right | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix)
+			: (TextFormatFlags.Left | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+		TextRenderer.DrawText(e.Graphics, e.SubItem.Text, fSmall, new Rectangle(cellBounds.X + DpiHelper.S(6), cellBounds.Y, Math.Max(1, cellBounds.Width - DpiHelper.S(12)), cellBounds.Height), fc, flags);
+	}
+
+	private void ResizeSrvColumns()
+	{
+		if (lstSrv == null || lstSrv.Columns.Count != 4) return;
+		int cw = lstSrv.ClientSize.Width;
+		int usableW = (cw > DpiHelper.S(200)) ? cw : Math.Max(DpiHelper.S(320), lstSrv.Width - DpiHelper.S(4));
+		int c1 = DpiHelper.S(76);
+		int c2 = DpiHelper.S(82);
+		int c3 = DpiHelper.S(76);
+		int c0 = Math.Max(DpiHelper.S(120), usableW - c1 - c2 - c3);
+		if (lstSrv.Columns[0].Width != c0) lstSrv.Columns[0].Width = c0;
+		if (lstSrv.Columns[1].Width != c1) lstSrv.Columns[1].Width = c1;
+		if (lstSrv.Columns[2].Width != c2) lstSrv.Columns[2].Width = c2;
+		if (lstSrv.Columns[3].Width != c3) lstSrv.Columns[3].Width = c3;
 	}
 
 	private void LayoutServersPage(int pageW, int pageH)
@@ -702,14 +807,47 @@ internal partial class LauncherForm
 
 		int chipY = topH + DpiHelper.S(6);
 		int chipH = DpiHelper.S(26);
-		btnF1.Location = new Point(0, chipY);
-		btnF1.Size = new Size(DpiHelper.S(96), chipH);
-		btnF2.Location = new Point(btnF1.Right + DpiHelper.S(6), chipY);
-		btnF2.Size = new Size(DpiHelper.S(96), chipH);
-		btnF3.Location = new Point(btnF2.Right + DpiHelper.S(6), chipY);
-		btnF3.Size = new Size(DpiHelper.S(108), chipH);
+		int chipGap = DpiHelper.S(6);
+		int chipX = 0;
+		if (btnMAll != null)
+		{
+			btnMAll.Visible = true;
+			btnMAll.Location = new Point(chipX, chipY);
+			btnMAll.Size = new Size(DpiHelper.S(66), chipH);
+			chipX = btnMAll.Right + chipGap;
+		}
+		if (btnMFav != null)
+		{
+			btnMFav.Visible = true;
+			btnMFav.Location = new Point(chipX, chipY);
+			btnMFav.Size = new Size(DpiHelper.S(74), chipH);
+			chipX = btnMFav.Right + chipGap;
+		}
+		if (btnMHist != null)
+		{
+			btnMHist.Visible = !isPub;
+			if (btnMHist.Visible)
+			{
+				btnMHist.Location = new Point(chipX, chipY);
+				btnMHist.Size = new Size(DpiHelper.S(66), chipH);
+				chipX = btnMHist.Right + chipGap;
+			}
+		}
+		btnF1.Visible = true;
+		btnF1.Location = new Point(chipX, chipY);
+		btnF1.Size = new Size(DpiHelper.S(74), chipH);
+		chipX = btnF1.Right + chipGap;
 
-		int contentY = isPub ? (chipY + chipH + DpiHelper.S(8)) : (topH + DpiHelper.S(8));
+		btnF2.Visible = true;
+		btnF2.Location = new Point(chipX, chipY);
+		btnF2.Size = new Size(DpiHelper.S(82), chipH);
+		chipX = btnF2.Right + chipGap;
+
+		btnF3.Visible = true;
+		btnF3.Location = new Point(chipX, chipY);
+		btnF3.Size = new Size(DpiHelper.S(90), chipH);
+
+		int contentY = chipY + chipH + DpiHelper.S(8);
 		int splitGap = DpiHelper.S(12);
 		int leftW = Math.Max(DpiHelper.S(380), (int)((pageW - splitGap) * 0.575));
 		int rightX = leftW + splitGap;
@@ -726,19 +864,7 @@ internal partial class LauncherForm
 		}
 		lstSrv.Location = new Point(0, contentY);
 		lstSrv.Size = new Size(leftW, listH);
-
-		if (lstSrv.Columns.Count == 4)
-		{
-			int usableW = Math.Max(DpiHelper.S(320), leftW - DpiHelper.S(20));
-			int c1 = DpiHelper.S(76);
-			int c2 = DpiHelper.S(72);
-			int c3 = DpiHelper.S(76);
-			int c0 = Math.Max(DpiHelper.S(120), usableW - c1 - c2 - c3);
-			if (lstSrv.Columns[0].Width != c0) lstSrv.Columns[0].Width = c0;
-			if (lstSrv.Columns[1].Width != c1) lstSrv.Columns[1].Width = c1;
-			if (lstSrv.Columns[2].Width != c2) lstSrv.Columns[2].Width = c2;
-			if (lstSrv.Columns[3].Width != c3) lstSrv.Columns[3].Width = c3;
-		}
+		ResizeSrvColumns();
 
 		if (emptyLbl != null)
 		{
@@ -749,13 +875,23 @@ internal partial class LauncherForm
 		}
 
 		int bGap = DpiHelper.S(6);
-		int wAdd = DpiHelper.S(76);
-		int wDel = DpiHelper.S(70);
-		int wInfo = DpiHelper.S(84);
-		int wWatch = Math.Max(DpiHelper.S(110), leftW - wAdd - wDel - wInfo - bGap * 3);
+		int wAdd = DpiHelper.S(68);
+		int wFav = DpiHelper.S(72);
+		int wDel = DpiHelper.S(62);
+		int wInfo = DpiHelper.S(74);
+		int wWatch = Math.Max(DpiHelper.S(96), leftW - wAdd - wFav - wDel - wInfo - bGap * 4);
 		btnSrvAdd.Location = new Point(0, botY);
 		btnSrvAdd.Size = new Size(wAdd, botH);
-		btnSrvDel.Location = new Point(btnSrvAdd.Right + bGap, botY);
+		if (btnSrvFav != null)
+		{
+			btnSrvFav.Location = new Point(btnSrvAdd.Right + bGap, botY);
+			btnSrvFav.Size = new Size(wFav, botH);
+			btnSrvDel.Location = new Point(btnSrvFav.Right + bGap, botY);
+		}
+		else
+		{
+			btnSrvDel.Location = new Point(btnSrvAdd.Right + bGap, botY);
+		}
 		btnSrvDel.Size = new Size(wDel, botH);
 		btnSrvInfo.Location = new Point(btnSrvDel.Right + bGap, botY);
 		btnSrvInfo.Size = new Size(wInfo, botH);
@@ -937,7 +1073,8 @@ internal partial class LauncherForm
 			if (lblDetMeta != null) lblDetMeta.Text = "";
 			if (btnDetFav != null)
 			{
-				btnDetFav.Text = "☆";
+				btnDetFav.Text = "";
+				btnDetFav.IconGlyph = BtnIcon.StarOutline;
 				btnDetFav.TextColor = colSub;
 				btnDetFav.BorderColor = Color.FromArgb(35, 52, 80);
 			}
@@ -1029,7 +1166,8 @@ internal partial class LauncherForm
 		if (btnDetFav != null)
 		{
 			bool isFav = (FindEntry(se.Ip, se.Port, true) != null);
-			btnDetFav.Text = isFav ? "★" : "☆";
+			btnDetFav.Text = "";
+			btnDetFav.IconGlyph = isFav ? BtnIcon.StarFilled : BtnIcon.StarOutline;
 			btnDetFav.TextColor = isFav ? colYellow : colSub;
 			btnDetFav.BorderColor = isFav ? colYellow : Color.FromArgb(35, 52, 80);
 		}
@@ -1274,20 +1412,25 @@ internal partial class LauncherForm
 		{
 			return false;
 		}
-		if (viewMode == "public")
+		if (mineSubFilter == "fav" && !e.Fav)
 		{
-			if (fHideFull && e.Players >= 0 && e.Max > 0 && e.Players >= e.Max)
-			{
-				return false;
-			}
-			if (fHideEmpty && e.Players <= 0)
-			{
-				return false;
-			}
-			if (fHideLocked && e.Locked)
-			{
-				return false;
-			}
+			return false;
+		}
+		if (mineSubFilter == "hist" && viewMode == "mine" && e.Fav)
+		{
+			return false;
+		}
+		if (fHideFull && e.Players >= 0 && e.Max > 0 && e.Players >= e.Max)
+		{
+			return false;
+		}
+		if (fHideEmpty && e.Players <= 0)
+		{
+			return false;
+		}
+		if (fHideLocked && e.Locked)
+		{
+			return false;
 		}
 		return true;
 	}
@@ -1352,9 +1495,34 @@ internal partial class LauncherForm
 
 	private void StyleChip(RoundedBtn b, bool on)
 	{
+		if (b == null) return;
 		Color color = Anim.Lerp(colField, colAccent, 0.45f);
 		b.SetPalette(on ? color : colField, colSel);
 		b.TextColor = (on ? colText : colSub);
+		b.BorderColor = on ? colAccent : Color.FromArgb(35, 52, 80);
+	}
+
+	private void UpdateFilterChipsStyle()
+	{
+		StyleChip(btnMAll, mineSubFilter == "all");
+		StyleChip(btnMFav, mineSubFilter == "fav");
+		StyleChip(btnMHist, mineSubFilter == "hist");
+		StyleChip(btnF1, fHideFull);
+		StyleChip(btnF2, fHideEmpty);
+		StyleChip(btnF3, fHideLocked);
+	}
+
+	private void UpdateServerModeTabs()
+	{
+		if (btnMine == null || btnPub == null) return;
+		Color color = Anim.Lerp(colField, colAccent, 0.45f);
+		bool isMine = (viewMode == "mine");
+		btnMine.SetPalette(isMine ? color : colField, colSel);
+		btnMine.TextColor = (isMine ? colText : colSub);
+		btnMine.BorderColor = isMine ? colAccent : Color.FromArgb(40, 60, 95);
+		btnPub.SetPalette(!isMine ? color : colField, colSel);
+		btnPub.TextColor = (!isMine ? colText : colSub);
+		btnPub.BorderColor = !isMine ? colAccent : Color.FromArgb(40, 60, 95);
 	}
 
 	private void UpdateRefreshButtonState()
@@ -1383,20 +1551,15 @@ internal partial class LauncherForm
 		if (viewMode != mode)
 		{
 			CancelActiveScan();
+			if (mode == "public" && mineSubFilter == "hist")
+			{
+				mineSubFilter = "all";
+			}
 		}
 		viewMode = mode;
-		Color color = Anim.Lerp(colField, colAccent, 0.45f);
-		btnMine.SetPalette((mode == "mine") ? color : colField, colField);
-		btnMine.TextColor = ((mode == "mine") ? colText : colSub);
-		btnPub.SetPalette((mode == "public") ? color : colField, colField);
-		btnPub.TextColor = ((mode == "public") ? colText : colSub);
+		UpdateServerModeTabs();
+		UpdateFilterChipsStyle();
 		bool flag = viewMode == "public";
-		if (btnF1 != null)
-		{
-			btnF1.Visible = flag;
-			btnF2.Visible = flag;
-			btnF3.Visible = flag;
-		}
 		LayoutServersPage(pnlSrv.Width, pnlSrv.Height);
 		RebuildList();
 		if (flag)
@@ -1986,6 +2149,10 @@ internal partial class LauncherForm
 			text2 = e.Ip + ":" + e.Port;
 		}
 		it.ToolTipText = text2 + ((text.Length > 0) ? ("\n" + text) : "");
+		if (lstSrv != null && lstSrv.IsHandleCreated)
+		{
+			try { lstSrv.Invalidate(it.Bounds); } catch { lstSrv.Invalidate(); }
+		}
 	}
 
 	private void RebuildList()
@@ -2896,6 +3063,16 @@ internal partial class LauncherForm
 		if (wt != null)
 		{
 			wt.Dispose();
+		}
+		if (srvToolTip != null)
+		{
+			srvToolTip.Dispose();
+			srvToolTip = null;
+		}
+		if (setToolTip != null)
+		{
+			setToolTip.Dispose();
+			setToolTip = null;
 		}
 	}
 }

@@ -27,9 +27,11 @@ internal partial class LauncherForm
 	private Label lblSetSlot;
 	private Label lblSetAltTab;
 	private Label lblSetClose;
+	private ToolTip setToolTip;
 
 	private void BuildSetPage()
 	{
+		setToolTip = new ToolTip();
 		// 1. Left Card: Graphics, FPS & Theme
 		pnlSetGfx = new SmoothPanel(colCard, 10);
 		pnlSetGfx.Location = new Point(0, 0);
@@ -116,6 +118,18 @@ internal partial class LauncherForm
 
 		AddLbl(pnlSetGame, "โฟลเดอร์ติดตั้ง GTA San Andreas:", fSmall, 14, 34, colSub);
 		txtPath = AddField(pnlSetGame, "", 14, 52, 214);
+		txtPath.TextChanged += delegate
+		{
+			if (setToolTip != null && !txtPath.IsDisposed)
+			{
+				string p = FieldVal(txtPath);
+				setToolTip.SetToolTip(txtPath, p);
+				if (txtPath.Parent != null)
+				{
+					setToolTip.SetToolTip(txtPath.Parent, p);
+				}
+			}
+		};
 		btnSetBrowse = MakeMiniBtn("เลือก...", 234, 52, 78, 42);
 		btnSetBrowse.BorderColor = colAccent;
 		btnSetBrowse.Click += delegate
@@ -175,7 +189,7 @@ internal partial class LauncherForm
 		};
 		pnlSetGame.Controls.Add(btnSetRestore);
 
-		btnSetFixCrash = MakeMiniBtn("🛠️  แก้เกมเด้ง (รีเซ็ต gta_sa.set)", 14, 222, 298, 28);
+		btnSetFixCrash = MakeMiniBtn("🛠  แก้เกมเด้ง (รีเซ็ต gta_sa.set)", 14, 222, 298, 28);
 		btnSetFixCrash.BorderColor = Color.FromArgb(243, 156, 18);
 		btnSetFixCrash.Click += delegate
 		{
@@ -190,7 +204,7 @@ internal partial class LauncherForm
 		pnlSetHealth.BorderColor = Color.FromArgb(40, 60, 95);
 		pnlSet.Controls.Add(pnlSetHealth);
 
-		AddLbl(pnlSetHealth, "🛡️  ตรวจสอบระบบ & ตัวเลือกการทำงาน (SYSTEM HEALTH & OPTIONS)", fSub, 14, 8, colAccent);
+		AddLbl(pnlSetHealth, "🛡  ตรวจสอบระบบ & ตัวเลือกการทำงาน (SYSTEM HEALTH & OPTIONS)", fSub, 14, 8, colAccent);
 
 		btnAutoFix = MakeMiniBtn("⚡ แก้ไขอัตโนมัติ", 392, 6, 130, 26);
 		btnAutoFix.BorderColor = Color.FromArgb(40, 60, 95);
@@ -230,9 +244,9 @@ internal partial class LauncherForm
 			}
 		};
 		pnlSetHealth.Controls.Add(swSoundFx);
-		lblSetSound = AddLbl(pnlSetHealth, "🔊  เสียงไซเบอร์ (Audio FX)", fSmall, 66, 112, colSub);
+		lblSetSound = AddLbl(pnlSetHealth, "🔊  เสียงไซเบอร์", fSmall, 66, 112, colSub);
 
-		btnSetTestSound = MakeMiniBtn("▶ ฟังเสียง", 204, 108, 64, 22);
+		btnSetTestSound = MakeMiniBtn("▶ ฟังเสียง", 168, 108, 68, 22);
 		btnSetTestSound.BorderColor = colAccent;
 		btnSetTestSound.Click += delegate
 		{
@@ -241,7 +255,7 @@ internal partial class LauncherForm
 		pnlSetHealth.Controls.Add(btnSetTestSound);
 
 		swDiscordRpc = new ToggleSwitch();
-		swDiscordRpc.Location = new Point(340, 108);
+		swDiscordRpc.Location = new Point(257, 108);
 		swDiscordRpc.CheckedChanged += delegate
 		{
 			discordRpcEnabled = swDiscordRpc.Checked;
@@ -252,10 +266,10 @@ internal partial class LauncherForm
 			}
 		};
 		pnlSetHealth.Controls.Add(swDiscordRpc);
-		lblSetDiscord = AddLbl(pnlSetHealth, "🎮  Discord Rich Presence", fSmall, 392, 112, colSub);
+		lblSetDiscord = AddLbl(pnlSetHealth, "🎮  Discord Rich Presence", fSmall, 309, 112, colSub);
 
 		swAutoSlot = new ToggleSwitch();
-		swAutoSlot.Location = new Point(14, 138);
+		swAutoSlot.Location = new Point(486, 108);
 		swAutoSlot.CheckedChanged += delegate
 		{
 			autoJoinSlot = swAutoSlot.Checked;
@@ -265,10 +279,10 @@ internal partial class LauncherForm
 			}
 		};
 		pnlSetHealth.Controls.Add(swAutoSlot);
-		lblSetSlot = AddLbl(pnlSetHealth, "⚡  ออโต้จอยเมื่อห้องว่าง", fSmall, 66, 142, colSub);
+		lblSetSlot = AddLbl(pnlSetHealth, "⚡  ออโต้จอยเมื่อห้องว่าง", fSmall, 538, 112, colSub);
 
 		swNoPauseAltTab = new ToggleSwitch();
-		swNoPauseAltTab.Location = new Point(230, 138);
+		swNoPauseAltTab.Location = new Point(14, 138);
 		swNoPauseAltTab.CheckedChanged += delegate
 		{
 			if (cfgReady)
@@ -277,10 +291,10 @@ internal partial class LauncherForm
 			}
 		};
 		pnlSetHealth.Controls.Add(swNoPauseAltTab);
-		lblSetAltTab = AddLbl(pnlSetHealth, "🖥️  ไม่ค้างตอนพับจอ (Alt+Tab)", fSmall, 282, 142, colSub);
+		lblSetAltTab = AddLbl(pnlSetHealth, "🖥  ไม่ค้างตอนพับจอ (Alt+Tab)", fSmall, 66, 142, colSub);
 
 		swClose = new ToggleSwitch();
-		swClose.Location = new Point(480, 138);
+		swClose.Location = new Point(257, 138);
 		swClose.CheckedChanged += delegate
 		{
 			if (cfgReady)
@@ -289,7 +303,7 @@ internal partial class LauncherForm
 			}
 		};
 		pnlSetHealth.Controls.Add(swClose);
-		lblSetClose = AddLbl(pnlSetHealth, "ปิดเมื่อเข้าเกม", fSmall, 532, 142, colSub);
+		lblSetClose = AddLbl(pnlSetHealth, "🚪  ปิดเมื่อเข้าเกม", fSmall, 309, 142, colSub);
 
 		UpdateSkyGfxButtons();
 		UpdateFpsButtons();
@@ -403,20 +417,27 @@ internal partial class LauncherForm
 		int lblOffX = DpiHelper.S(52);
 		int lblOffY = DpiHelper.S(4);
 
-		if (swSoundFx != null) { swSoundFx.Location = new Point(pad, row1Y); swSoundFx.Size = new Size(swW2, swH2); }
-		if (lblSetSound != null) lblSetSound.Location = new Point(pad + lblOffX, row1Y + lblOffY);
-		if (btnSetTestSound != null) { btnSetTestSound.Location = new Point(Math.Max(DpiHelper.S(212), col2X - DpiHelper.S(88)), row1Y); btnSetTestSound.Size = new Size(DpiHelper.S(68), DpiHelper.S(22)); }
-		if (swDiscordRpc != null) { swDiscordRpc.Location = new Point(col2X, row1Y); swDiscordRpc.Size = new Size(swW2, swH2); }
-		if (lblSetDiscord != null) lblSetDiscord.Location = new Point(col2X + lblOffX, row1Y + lblOffY);
+		int colA = pad;
+		int colB = Math.Max(DpiHelper.S(254), (int)(pageW * 0.37));
+		int colC = Math.Max(DpiHelper.S(486), (int)(pageW * 0.69));
 
-		int tCol2X = Math.Max(DpiHelper.S(230), (int)(pageW * 0.34));
-		int tCol3X = Math.Max(DpiHelper.S(480), (int)(pageW * 0.70));
-		if (swAutoSlot != null) { swAutoSlot.Location = new Point(pad, row2Y); swAutoSlot.Size = new Size(swW2, swH2); }
-		if (lblSetSlot != null) lblSetSlot.Location = new Point(pad + lblOffX, row2Y + lblOffY);
-		if (swNoPauseAltTab != null) { swNoPauseAltTab.Location = new Point(tCol2X, row2Y); swNoPauseAltTab.Size = new Size(swW2, swH2); }
-		if (lblSetAltTab != null) lblSetAltTab.Location = new Point(tCol2X + lblOffX, row2Y + lblOffY);
-		if (swClose != null) { swClose.Location = new Point(tCol3X, row2Y); swClose.Size = new Size(swW2, swH2); }
-		if (lblSetClose != null) lblSetClose.Location = new Point(tCol3X + lblOffX, row2Y + lblOffY);
+		if (swSoundFx != null) { swSoundFx.Location = new Point(colA, row1Y); swSoundFx.Size = new Size(swW2, swH2); }
+		if (lblSetSound != null) lblSetSound.Location = new Point(colA + lblOffX, row1Y + lblOffY);
+		if (btnSetTestSound != null)
+		{
+			int sndBtnX = Math.Min(colB - DpiHelper.S(76), colA + DpiHelper.S(154));
+			btnSetTestSound.Location = new Point(sndBtnX, row1Y + DpiHelper.S(1));
+			btnSetTestSound.Size = new Size(DpiHelper.S(68), DpiHelper.S(22));
+		}
+		if (swDiscordRpc != null) { swDiscordRpc.Location = new Point(colB, row1Y); swDiscordRpc.Size = new Size(swW2, swH2); }
+		if (lblSetDiscord != null) lblSetDiscord.Location = new Point(colB + lblOffX, row1Y + lblOffY);
+		if (swAutoSlot != null) { swAutoSlot.Location = new Point(colC, row1Y); swAutoSlot.Size = new Size(swW2, swH2); }
+		if (lblSetSlot != null) lblSetSlot.Location = new Point(colC + lblOffX, row1Y + lblOffY);
+
+		if (swNoPauseAltTab != null) { swNoPauseAltTab.Location = new Point(colA, row2Y); swNoPauseAltTab.Size = new Size(swW2, swH2); }
+		if (lblSetAltTab != null) lblSetAltTab.Location = new Point(colA + lblOffX, row2Y + lblOffY);
+		if (swClose != null) { swClose.Location = new Point(colB, row2Y); swClose.Size = new Size(swW2, swH2); }
+		if (lblSetClose != null) lblSetClose.Location = new Point(colB + lblOffX, row2Y + lblOffY);
 	}
 
 	private void ApplySkyGfxPreset(string mode)
@@ -475,21 +496,24 @@ internal partial class LauncherForm
 		Color cNorm = colField;
 		Color cNormHi = colFieldHover;
 
+		Color activeBorder = Color.FromArgb(200, colAccentHi);
+		Color normalBorder = Color.FromArgb(35, 52, 80);
+
 		btnSgPs2.SetPalette((activeSkyGfx == "ps2") ? cAct : cNorm, (activeSkyGfx == "ps2") ? cActHi : cNormHi);
 		btnSgPs2.TextColor = (activeSkyGfx == "ps2") ? Color.FromArgb(11, 14, 20) : colSub;
-		btnSgPs2.BorderColor = (activeSkyGfx == "ps2") ? Color.FromArgb(180, 240, 255) : Color.FromArgb(35, 52, 80);
+		btnSgPs2.BorderColor = (activeSkyGfx == "ps2") ? activeBorder : normalBorder;
 
 		btnSgPc.SetPalette((activeSkyGfx == "pc") ? cAct : cNorm, (activeSkyGfx == "pc") ? cActHi : cNormHi);
 		btnSgPc.TextColor = (activeSkyGfx == "pc") ? Color.FromArgb(11, 14, 20) : colSub;
-		btnSgPc.BorderColor = (activeSkyGfx == "pc") ? Color.FromArgb(180, 240, 255) : Color.FromArgb(35, 52, 80);
+		btnSgPc.BorderColor = (activeSkyGfx == "pc") ? activeBorder : normalBorder;
 
 		btnSgMob.SetPalette((activeSkyGfx == "mobile") ? cAct : cNorm, (activeSkyGfx == "mobile") ? cActHi : cNormHi);
 		btnSgMob.TextColor = (activeSkyGfx == "mobile") ? Color.FromArgb(11, 14, 20) : colSub;
-		btnSgMob.BorderColor = (activeSkyGfx == "mobile") ? Color.FromArgb(180, 240, 255) : Color.FromArgb(35, 52, 80);
+		btnSgMob.BorderColor = (activeSkyGfx == "mobile") ? activeBorder : normalBorder;
 
 		btnSgOff.SetPalette((activeSkyGfx == "off") ? cAct : cNorm, (activeSkyGfx == "off") ? cActHi : cNormHi);
 		btnSgOff.TextColor = (activeSkyGfx == "off") ? Color.FromArgb(11, 14, 20) : colSub;
-		btnSgOff.BorderColor = (activeSkyGfx == "off") ? Color.FromArgb(180, 240, 255) : Color.FromArgb(35, 52, 80);
+		btnSgOff.BorderColor = (activeSkyGfx == "off") ? activeBorder : normalBorder;
 	}
 
 	private static void UpdateIniKeys(string path, Dictionary<string, string> updates, bool spacedEquals)
@@ -863,7 +887,8 @@ internal partial class LauncherForm
 	{
 		if (lblHealth != null && i >= 0 && i < lblHealth.Length && lblHealth[i] != null && !lblHealth[i].IsDisposed)
 		{
-			lblHealth[i].Text = s;
+			lblHealth[i].UseMnemonic = false;
+			lblHealth[i].Text = (s ?? "").Replace("\uFE0F", "");
 			lblHealth[i].ForeColor = c;
 		}
 	}

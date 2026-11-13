@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 
 internal class ScanUpdateItem
 {
@@ -196,6 +197,10 @@ internal interface ICore
 	void ClearLatestCrash(string gameDir);
 
 	bool ApplyDwm(IntPtr hWnd);
+
+	bool SetDwmAccent(IntPtr hWnd, Color accent);
+
+	bool StyleListView(IntPtr lvHwnd, Color headerBg, Color accent);
 
 	void StartPingSpark(string ip, int port);
 
