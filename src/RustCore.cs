@@ -8,7 +8,6 @@ using System.Web.Script.Serialization;
 
 internal class RustCore : ICore
 {
-	private readonly ManagedCore fallback = new ManagedCore();
 	private string engineVersion = "Rust (samp_core.dll)";
 
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -128,6 +127,18 @@ internal class RustCore : ICore
 	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
 	private static extern void core_ping_spark_stop();
 
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_shield_diagnostics(byte[] gameDir, byte[] host, ushort port);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_shield_save_ini(byte[] gameDir, byte[] updatesJson);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_prewarm_server(byte[] host, ushort port);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern ulong core_trim_memory();
+
 	public string EngineName
 	{
 		get { return engineVersion; }
@@ -200,25 +211,29 @@ internal class RustCore : ICore
 		}
 		try
 		{
-			JavaScriptSerializer js = new JavaScriptSerializer();
-			Dictionary<string, object> d = js.Deserialize<Dictionary<string, object>>(json);
-			if (d == null)
+			Dictionary<string, object> d = DeserializeDict(json);
+			if (d != null)
 			{
-				return qr;
+				ParseQueryInfoInto(d, qr);
 			}
-			qr.Online = GetBool(d, "online");
-			qr.Name = GetStr(d, "name");
-			qr.Players = GetInt(d, "players", -1);
-			qr.Max = GetInt(d, "max", 0);
-			qr.Ping = GetInt(d, "ping", -1);
-			qr.Mode = GetStr(d, "mode");
-			qr.Language = GetStr(d, "language");
-			qr.IsOpenMp = GetBool(d, "is_open_mp");
 		}
 		catch
 		{
 		}
 		return qr;
+	}
+
+	private static void ParseQueryInfoInto(Dictionary<string, object> d, QueryResult qr)
+	{
+		qr.Online = GetBool(d, "online");
+		qr.Name = GetStr(d, "name");
+		qr.Players = GetInt(d, "players", -1);
+		qr.Max = GetInt(d, "max", 0);
+		qr.Ping = GetInt(d, "ping", -1);
+		qr.Mode = GetStr(d, "mode");
+		qr.Language = GetStr(d, "language");
+		qr.IsOpenMp = GetBool(d, "is_open_mp");
+		qr.Locked = GetBool(d, "password_locked");
 	}
 
 	public List<string[]> QueryPlayers(string host, int port)
@@ -376,6 +391,7 @@ internal class RustCore : ICore
 							u.Mode = GetStr(ud, "mode");
 							u.Language = GetStr(ud, "language");
 							u.IsOpenMp = GetBool(ud, "is_open_mp");
+							u.Locked = GetBool(ud, "locked");
 							res.Updates.Add(u);
 						}
 					}
@@ -405,7 +421,7 @@ internal class RustCore : ICore
 			ToUtf8(statsTxtPath ?? "")));
 		if (!string.IsNullOrEmpty(err))
 		{
-			fallback.InitStorage(dbPath, playtimeTxtPath, statsTxtPath);
+			throw new Exception(err);
 		}
 	}
 
@@ -415,7 +431,7 @@ internal class RustCore : ICore
 		string json = TakeOwnedStr(core_db_get_all_playtime());
 		if (string.IsNullOrEmpty(json))
 		{
-			return fallback.LoadAllPlaytime();
+			return map;
 		}
 		try
 		{
@@ -450,30 +466,22 @@ internal class RustCore : ICore
 	public long AddPlaytime(string serverKey, long deltaSeconds)
 	{
 		long total = core_db_add_playtime(ToUtf8(serverKey), deltaSeconds);
-		if (total < 0)
-		{
-			return fallback.AddPlaytime(serverKey, deltaSeconds);
-		}
-		return total;
+		return (total < 0) ? 0L : total;
 	}
 
 	public void RecordStat(string ip, string port, string recordedAt, int players)
 	{
-		int res = core_db_record_stat(ToUtf8(ip), ToUtf8(port), ToUtf8(recordedAt), players);
-		if (res < 0)
-		{
-			fallback.RecordStat(ip, port, recordedAt, players);
-		}
+		core_db_record_stat(ToUtf8(ip), ToUtf8(port), ToUtf8(recordedAt), players);
 	}
 
 	public List<int> GetStats(string ip, string port, int limit)
 	{
+		List<int> list = new List<int>();
 		string json = TakeOwnedStr(core_db_get_stats(ToUtf8(ip), ToUtf8(port), (uint)(limit > 0 ? limit : 500)));
 		if (string.IsNullOrEmpty(json))
 		{
-			return fallback.GetStats(ip, port, limit);
+			return list;
 		}
-		List<int> list = new List<int>();
 		try
 		{
 			JavaScriptSerializer js = new JavaScriptSerializer();
@@ -500,18 +508,18 @@ internal class RustCore : ICore
 
 	public HealthCheckReport CheckHealth(string gameDir, string skyGfxPreset)
 	{
+		HealthCheckReport fallbackRep = new HealthCheckReport();
 		string json = TakeOwnedStr(core_health_check(ToUtf8(gameDir), ToUtf8(skyGfxPreset ?? "ps2")));
 		if (string.IsNullOrEmpty(json))
 		{
-			return fallback.CheckHealth(gameDir, skyGfxPreset);
+			return fallbackRep;
 		}
 		try
 		{
-			JavaScriptSerializer js = new JavaScriptSerializer();
-			Dictionary<string, object> d = js.Deserialize<Dictionary<string, object>>(json);
+			Dictionary<string, object> d = DeserializeDict(json);
 			if (d == null)
 			{
-				return fallback.CheckHealth(gameDir, skyGfxPreset);
+				return fallbackRep;
 			}
 			HealthCheckReport r = new HealthCheckReport();
 			r.GtaStatus = GetStr(d, "gta_status");
@@ -528,12 +536,13 @@ internal class RustCore : ICore
 			r.ReadonlyFiles = GetStrList(d, "readonly_files");
 			r.InProgramFiles = GetBool(d, "in_program_files");
 			r.MissingDx9 = GetBool(d, "missing_dx9");
+			r.NeedsLaa = GetBool(d, "needs_laa");
 			r.FixableCount = GetInt(d, "fixable_count", 0);
 			return r;
 		}
 		catch
 		{
-			return fallback.CheckHealth(gameDir, skyGfxPreset);
+			return fallbackRep;
 		}
 	}
 
@@ -542,7 +551,7 @@ internal class RustCore : ICore
 		string json = TakeOwnedStr(core_health_autofix(ToUtf8(gameDir)));
 		if (string.IsNullOrEmpty(json))
 		{
-			return fallback.AutoFixHealth(gameDir);
+			return "เกิดข้อผิดพลาดในการซ่อมอัตโนมัติ (samp_core.dll)";
 		}
 		Dictionary<string, object> d = DeserializeDict(json);
 		if (d == null)
@@ -588,7 +597,7 @@ internal class RustCore : ICore
 		string json = TakeOwnedStr(core_snapshot_create(ToUtf8(gameDir), ToUtf8(name ?? "")));
 		if (string.IsNullOrEmpty(json))
 		{
-			return fallback.CreateSnapshot(gameDir, name);
+			throw new Exception("สร้าง Snapshot ไม่สำเร็จ (samp_core.dll)");
 		}
 		Dictionary<string, object> d = DeserializeDict(json);
 		if (d == null)
@@ -721,6 +730,7 @@ internal class RustCore : ICore
 		report.ErrorCount = GetInt(d, "error_count", 0);
 		report.WarnCount = GetInt(d, "warn_count", 0);
 		report.DuplicateCount = GetInt(d, "duplicate_count", 0);
+		report.TruncatedIssues = GetBool(d, "truncated_issues");
 
 		object rawIssues;
 		if (d.TryGetValue("issues", out rawIssues))
@@ -858,19 +868,7 @@ internal class RustCore : ICore
 		Dictionary<string, object> cd = GetDict(d, "crash");
 		if (cd != null)
 		{
-			CrashInfo ci = new CrashInfo();
-			ci.Timestamp = GetStr(cd, "timestamp");
-			ci.ExceptionCode = GetStr(cd, "exception_code");
-			ci.ExceptionName = GetStr(cd, "exception_name");
-			ci.FaultAddress = GetStr(cd, "fault_address");
-			ci.ModuleName = GetStr(cd, "module_name");
-			ci.ModuleOffset = GetStr(cd, "module_offset");
-			ci.ThaiExplanation = GetStr(cd, "thai_explanation");
-			ci.Suggestion = GetStr(cd, "suggestion");
-			ci.WorkingSetMb = GetLong(cd, "working_set_mb", 0);
-			ci.VirtualMemMb = GetLong(cd, "virtual_mem_mb", 0);
-			ci.LoadedModules = GetStrList(cd, "loaded_modules");
-			st.Crash = ci;
+			st.Crash = ParseCrashInfo(cd);
 		}
 
 		Dictionary<string, object> td = GetDict(d, "telemetry");
@@ -883,6 +881,13 @@ internal class RustCore : ICore
 			t.PrivateBytesMb = GetLong(td, "private_bytes_mb", 0);
 			t.VirtualMemMb = GetLong(td, "virtual_mem_mb", 0);
 			t.Timestamp = GetStr(td, "timestamp");
+			t.SystemFreeRamMb = GetLong(td, "system_free_ram_mb", 0);
+			t.ActiveMic = GetStr(td, "active_mic");
+			t.NetShieldActive = GetBool(td, "net_shield_active");
+			t.AudioShieldActive = GetBool(td, "audio_shield_active");
+			t.GpuShieldActive = GetBool(td, "gpu_shield_active");
+			t.BorderlessActive = GetBool(td, "borderless_active");
+			t.TunedUdpSockets = GetInt(td, "tuned_udp_sockets", 0);
 			st.Telemetry = t;
 		}
 
@@ -1018,6 +1023,193 @@ internal class RustCore : ICore
 		}
 	}
 
+	public ShieldDiagnostics GetShieldDiagnostics(string gameDir, string host, int port)
+	{
+		ShieldDiagnostics res = new ShieldDiagnostics();
+		try
+		{
+			ushort p = (port > 0 && port <= 65535) ? (ushort)port : (ushort)7777;
+			string json = TakeOwnedStr(core_shield_diagnostics(ToUtf8(gameDir ?? ""), ToUtf8(host ?? ""), p));
+			if (string.IsNullOrEmpty(json))
+			{
+				return res;
+			}
+			Dictionary<string, object> root = DeserializeDict(json);
+			if (root == null)
+			{
+				return res;
+			}
+
+			Dictionary<string, object> st = GetDict(root, "settings");
+			if (st != null)
+			{
+				res.Enable = GetBool(st, "enable");
+				res.Borderless = GetBool(st, "borderless");
+				res.CatchCrash = GetBool(st, "catch_crash");
+				res.HighPrecisionTimer = GetBool(st, "high_precision_timer");
+				res.Telemetry = GetBool(st, "telemetry");
+				res.NetShield = GetBool(st, "net_shield");
+				res.AudioShield = GetBool(st, "audio_shield");
+				res.PreferredMic = GetStr(st, "preferred_mic");
+				res.GpuBoost = GetBool(st, "gpu_boost");
+				res.ForceImmediatePresent = GetBool(st, "force_immediate_present");
+				string rm = GetStr(st, "resource_mode");
+				if (!string.IsNullOrEmpty(rm)) res.ResourceMode = rm;
+				string ca = GetStr(st, "cpu_affinity");
+				if (!string.IsNullOrEmpty(ca)) res.CpuAffinity = ca;
+			}
+
+			Dictionary<string, object> net = GetDict(root, "net");
+			if (net != null)
+			{
+				Dictionary<string, object> fw = GetDict(net, "firewall");
+				if (fw != null)
+				{
+					res.FirewallChecked = GetBool(fw, "checked");
+					res.FirewallGtaAllowed = GetBool(fw, "gta_sa_allowed");
+					res.FirewallGtaBlocked = GetBool(fw, "gta_sa_blocked");
+					res.FirewallSummary = GetStr(fw, "summary");
+				}
+				res.AltTabNoPause = GetBool(net, "alt_tab_nopause");
+				res.AltTabNote = GetStr(net, "alt_tab_note");
+				res.LastVoiceServer = GetStr(net, "last_voice_server");
+				res.LastVoicePort = GetInt(net, "last_voice_port", 0);
+			}
+
+			Dictionary<string, object> aud = GetDict(root, "audio");
+			if (aud != null)
+			{
+				res.MicConsentAllowed = GetBool(aud, "mic_consent_allowed");
+				res.AudioRecommendation = GetStr(aud, "recommendation");
+				object rawDevs;
+				if (aud.TryGetValue("devices", out rawDevs))
+				{
+					IList list = rawDevs as IList;
+					if (list != null)
+					{
+						foreach (object item in list)
+						{
+							Dictionary<string, object> dm = item as Dictionary<string, object>;
+							if (dm != null)
+							{
+								MicDeviceInfo mi = new MicDeviceInfo();
+								mi.Id = GetInt(dm, "id", 0);
+								mi.Name = GetStr(dm, "name");
+								mi.IsVirtual = GetBool(dm, "is_virtual");
+								mi.Recommended = GetBool(dm, "recommended");
+								res.Mics.Add(mi);
+							}
+						}
+					}
+				}
+				Dictionary<string, object> sv = GetDict(aud, "svlog");
+				if (sv != null)
+				{
+					res.SvlogPauseDisconnect = GetBool(sv, "had_pause_disconnect");
+					res.SvlogErrors = GetStrList(sv, "recent_errors");
+				}
+			}
+
+			Dictionary<string, object> gp = GetDict(root, "gpu");
+			if (gp != null)
+			{
+				res.IsHybridGpu = GetBool(gp, "is_hybrid");
+				res.IgpuName = GetStr(gp, "igpu_name");
+				res.DgpuName = GetStr(gp, "dgpu_name");
+				res.WindowsGpuPref = GetStr(gp, "windows_pref_for_gta");
+				res.GpuSummary = GetStr(gp, "status_summary");
+			}
+
+			Dictionary<string, object> rs = GetDict(root, "resources");
+			if (rs != null)
+			{
+				res.TotalRamMb = GetLong(rs, "total_phys_mb", 0);
+				res.AvailRamMb = GetLong(rs, "avail_phys_mb", 0);
+				res.MemoryLoadPct = GetInt(rs, "memory_load_pct", 0);
+				res.LogicalCores = GetInt(rs, "logical_cores", 0);
+				res.RecommendedStreamMb = GetInt(rs, "recommended_stream_mb", 512);
+				res.RecommendedLimitMb = GetInt(rs, "recommended_limit_mb", 512);
+				res.LauncherWorkingSetMb = GetLong(rs, "launcher_working_set_mb", 0);
+			}
+		}
+		catch
+		{
+		}
+		return res;
+	}
+
+	public string SaveShieldIni(string gameDir, Dictionary<string, string> updates)
+	{
+		try
+		{
+			JavaScriptSerializer js = new JavaScriptSerializer();
+			string payload = js.Serialize(updates ?? new Dictionary<string, string>());
+			string json = TakeOwnedStr(core_shield_save_ini(ToUtf8(gameDir ?? ""), ToUtf8(payload)));
+			if (!string.IsNullOrEmpty(json))
+			{
+				Dictionary<string, object> d = DeserializeDict(json);
+				if (d != null && GetBool(d, "ok"))
+				{
+					return null;
+				}
+				if (d != null)
+				{
+					return GetStr(d, "error");
+				}
+			}
+			return "บันทึก SonicGuard.ini ไม่สำเร็จ";
+		}
+		catch (Exception ex)
+		{
+			return ex.Message;
+		}
+	}
+
+	public PrewarmReport PrewarmServer(string host, int port)
+	{
+		PrewarmReport rep = new PrewarmReport();
+		try
+		{
+			if (string.IsNullOrEmpty(host) || port <= 0 || port > 65535)
+			{
+				rep.Summary = "IP หรือ Port ไม่ถูกต้อง";
+				return rep;
+			}
+			string json = TakeOwnedStr(core_prewarm_server(ToUtf8(host), (ushort)port));
+			if (!string.IsNullOrEmpty(json))
+			{
+				Dictionary<string, object> d = DeserializeDict(json);
+				if (d != null)
+				{
+					rep.Host = GetStr(d, "host");
+					rep.ResolvedIp = GetStr(d, "resolved_ip");
+					rep.GamePort = GetInt(d, "game_port", port);
+					rep.VoicePort = GetInt(d, "voice_port", 0);
+					rep.DnsMs = GetInt(d, "dns_ms", 0);
+					rep.GamePingMs = GetInt(d, "game_ping_ms", -1);
+					rep.VoiceRouteWarmed = GetBool(d, "voice_route_warmed");
+					rep.Summary = GetStr(d, "summary");
+				}
+			}
+		}
+		catch
+		{
+		}
+		return rep;
+	}
+
+	public long TrimLauncherMemory()
+	{
+		try
+		{
+			return (long)core_trim_memory();
+		}
+		catch
+		{
+			return 0L;
+		}
+	}
+
 	private static double GetDouble(Dictionary<string, object> d, string key, double def)
 	{
 		object v;
@@ -1038,6 +1230,493 @@ internal class RustCore : ICore
 		{
 		}
 	}
+
+	public LauncherSettingsDto LoadSettings(string cfgPath)
+	{
+		LauncherSettingsDto cfg = new LauncherSettingsDto();
+		string json = TakeOwnedStr(core_settings_load(ToUtf8(cfgPath ?? "")));
+		if (string.IsNullOrEmpty(json))
+		{
+			return cfg;
+		}
+		Dictionary<string, object> env = DeserializeDict(json);
+		if (env == null || !GetBool(env, "ok"))
+		{
+			return cfg;
+		}
+		Dictionary<string, object> d = GetDict(env, "data");
+		if (d == null)
+		{
+			return cfg;
+		}
+		cfg.Nick = GetStr(d, "nick");
+		string acc = GetStr(d, "accent");
+		if (!string.IsNullOrEmpty(acc)) cfg.Accent = acc;
+		cfg.GamePath = GetStr(d, "game_path");
+		cfg.AutoConnect = GetBool(d, "auto_connect");
+		cfg.CloseAfterLaunch = GetBool(d, "close_after_launch");
+		string lip = GetStr(d, "last_ip");
+		if (!string.IsNullOrEmpty(lip)) cfg.LastIp = lip;
+		string lpt = GetStr(d, "last_port");
+		if (!string.IsNullOrEmpty(lpt)) cfg.LastPort = lpt;
+		cfg.RconIp = GetStr(d, "rcon_ip");
+		cfg.RconPort = GetStr(d, "rcon_port");
+		cfg.RconPass = GetStr(d, "rcon_pass");
+		cfg.SortCol = GetInt(d, "sort_col", 0);
+		cfg.SortDesc = GetBool(d, "sort_desc");
+		string sg = GetStr(d, "skygfx_preset");
+		if (!string.IsNullOrEmpty(sg)) cfg.SkyGfxPreset = sg;
+		cfg.FpsLimit = GetInt(d, "fps_limit", 0);
+		cfg.AutoJoinSlot = GetBool(d, "auto_join_slot");
+		if (d.ContainsKey("sound_fx")) cfg.SoundFx = GetBool(d, "sound_fx");
+		if (d.ContainsKey("discord_rpc")) cfg.DiscordRpc = GetBool(d, "discord_rpc");
+		cfg.DiscordAppId = GetStr(d, "discord_app_id");
+		cfg.NoPauseAltTab = GetBool(d, "no_pause_alt_tab");
+		cfg.NickProfiles = GetStrList(d, "nick_profiles");
+		return cfg;
+	}
+
+	public string SaveSettings(string cfgPath, LauncherSettingsDto cfg)
+	{
+		if (cfg == null)
+		{
+			return "ไม่มีข้อมูลการตั้งค่า";
+		}
+		try
+		{
+			Dictionary<string, object> m = new Dictionary<string, object>();
+			m["nick"] = cfg.Nick ?? "";
+			m["accent"] = cfg.Accent ?? "138,43,226";
+			m["game_path"] = cfg.GamePath ?? "";
+			m["auto_connect"] = cfg.AutoConnect;
+			m["close_after_launch"] = cfg.CloseAfterLaunch;
+			m["last_ip"] = cfg.LastIp ?? "127.0.0.1";
+			m["last_port"] = cfg.LastPort ?? "7777";
+			m["rcon_ip"] = cfg.RconIp ?? "";
+			m["rcon_port"] = cfg.RconPort ?? "";
+			m["rcon_pass"] = cfg.RconPass ?? "";
+			m["sort_col"] = cfg.SortCol;
+			m["sort_desc"] = cfg.SortDesc;
+			m["skygfx_preset"] = cfg.SkyGfxPreset ?? "ps2";
+			m["fps_limit"] = cfg.FpsLimit;
+			m["auto_join_slot"] = cfg.AutoJoinSlot;
+			m["sound_fx"] = cfg.SoundFx;
+			m["discord_rpc"] = cfg.DiscordRpc;
+			m["discord_app_id"] = cfg.DiscordAppId ?? "";
+			m["no_pause_alt_tab"] = cfg.NoPauseAltTab;
+			m["nick_profiles"] = cfg.NickProfiles ?? new List<string>();
+			JavaScriptSerializer js = new JavaScriptSerializer();
+			string json = js.Serialize(m);
+			return TakeOwnedStr(core_settings_save(ToUtf8(cfgPath ?? ""), ToUtf8(json)));
+		}
+		catch (Exception ex)
+		{
+			return ex.Message;
+		}
+	}
+
+	public string SetAltTabNoPause(string gameDir, bool enable)
+	{
+		return TakeOwnedStr(core_alt_tab_set(ToUtf8(gameDir ?? ""), enable));
+	}
+
+	public bool ResetGtaSaSet()
+	{
+		string json = TakeOwnedStr(core_reset_gta_set());
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			throw new Exception("รีเซ็ต gta_sa.set ไม่สำเร็จ");
+		}
+		if (!GetBool(d, "ok"))
+		{
+			string err = GetStr(d, "error");
+			throw new Exception(string.IsNullOrEmpty(err) ? "รีเซ็ต gta_sa.set ไม่สำเร็จ" : err);
+		}
+		return GetBool(d, "data");
+	}
+
+	private static List<SavedServerDto> ParseSavedServerList(string json)
+	{
+		List<SavedServerDto> list = new List<SavedServerDto>();
+		if (string.IsNullOrEmpty(json))
+		{
+			return list;
+		}
+		try
+		{
+			JavaScriptSerializer js = new JavaScriptSerializer();
+			js.MaxJsonLength = 16 * 1024 * 1024;
+			IList arr = js.DeserializeObject(json) as IList;
+			if (arr != null)
+			{
+				foreach (object obj in arr)
+				{
+					Dictionary<string, object> d = obj as Dictionary<string, object>;
+					if (d != null)
+					{
+						SavedServerDto item = new SavedServerDto();
+						item.Ip = GetStr(d, "ip");
+						item.Port = GetStr(d, "port");
+						item.Name = GetStr(d, "name");
+						item.LastJoinedAt = GetLong(d, "last_joined_at", 0);
+						item.JoinCount = GetLong(d, "join_count", 0);
+						list.Add(item);
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return list;
+	}
+
+	public List<SavedServerDto> ListFavorites()
+	{
+		return ParseSavedServerList(TakeOwnedStr(core_db_fav_list()));
+	}
+
+	public void UpsertFavorite(string ip, string port, string name)
+	{
+		string err = TakeOwnedStr(core_db_fav_upsert(ToUtf8(ip ?? ""), ToUtf8(port ?? ""), ToUtf8(name ?? "")));
+		if (!string.IsNullOrEmpty(err))
+		{
+			throw new Exception(err);
+		}
+	}
+
+	public bool RemoveFavorite(string ip, string port)
+	{
+		return core_db_fav_remove(ToUtf8(ip ?? ""), ToUtf8(port ?? "")) > 0;
+	}
+
+	public List<SavedServerDto> ListHistory(int limit)
+	{
+		uint cap = (limit > 0) ? (uint)limit : 30u;
+		return ParseSavedServerList(TakeOwnedStr(core_db_hist_list(cap)));
+	}
+
+	public void RecordHistory(string ip, string port, string name)
+	{
+		string err = TakeOwnedStr(core_db_hist_record(ToUtf8(ip ?? ""), ToUtf8(port ?? ""), ToUtf8(name ?? "")));
+		if (!string.IsNullOrEmpty(err))
+		{
+			throw new Exception(err);
+		}
+	}
+
+	public bool RemoveHistory(string ip, string port)
+	{
+		return core_db_hist_remove(ToUtf8(ip ?? ""), ToUtf8(port ?? "")) > 0;
+	}
+
+	public void RenameSavedServer(string ip, string port, string name)
+	{
+		string err = TakeOwnedStr(core_db_server_rename(ToUtf8(ip ?? ""), ToUtf8(port ?? ""), ToUtf8(name ?? "")));
+		if (!string.IsNullOrEmpty(err))
+		{
+			throw new Exception(err);
+		}
+	}
+
+	public WatchdogStatusDto PollWatchdog()
+	{
+		WatchdogStatusDto st = new WatchdogStatusDto();
+		string json = TakeOwnedStr(core_watchdog_poll());
+		if (string.IsNullOrEmpty(json))
+		{
+			return st;
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			return st;
+		}
+		st.Active = GetBool(d, "active");
+		st.Running = GetBool(d, "running");
+		st.Exited = GetBool(d, "exited");
+		st.Crashed = GetBool(d, "crashed");
+		long pid = GetLong(d, "pid", 0);
+		st.Pid = (pid >= 0) ? (uint)pid : 0u;
+		st.ServerKey = GetStr(d, "server_key");
+		st.SessionSeconds = GetLong(d, "session_seconds", 0);
+		st.TotalPlaytime = GetLong(d, "total_playtime", 0);
+		long ec = GetLong(d, "exit_code", 0);
+		st.ExitCode = (ec >= 0) ? (uint)ec : 0u;
+		st.Crash = ParseCrashInfo(GetDict(d, "crash"));
+		return st;
+	}
+
+	public void StopWatchdog()
+	{
+		try { core_watchdog_stop(); } catch { }
+	}
+
+	public bool IsGameRunning()
+	{
+		try { return core_is_game_running() == 1; } catch { return false; }
+	}
+
+	public ServerDetailsDto QueryServerDetails(string host, int port)
+	{
+		ServerDetailsDto res = new ServerDetailsDto();
+		if (port < 1 || port > 65535 || string.IsNullOrEmpty(host))
+		{
+			return res;
+		}
+		string json = TakeOwnedStr(core_query_server_details(ToUtf8(host), (ushort)port));
+		if (string.IsNullOrEmpty(json))
+		{
+			return res;
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			return res;
+		}
+		Dictionary<string, object> info = GetDict(d, "info");
+		if (info != null)
+		{
+			ParseQueryInfoInto(info, res.Info);
+		}
+		object rawPlayers;
+		if (d.TryGetValue("players", out rawPlayers) && rawPlayers != null)
+		{
+			res.Players = ParseStringMatrixList(rawPlayers as IList);
+		}
+		object rawRules;
+		if (d.TryGetValue("rules", out rawRules) && rawRules != null)
+		{
+			res.Rules = ParseStringMatrixList(rawRules as IList);
+		}
+		return res;
+	}
+
+	public bool StartSlotWatch(string host, int port)
+	{
+		if (port < 1 || port > 65535 || string.IsNullOrEmpty(host))
+		{
+			return false;
+		}
+		try { return core_slot_watch_start(ToUtf8(host), (ushort)port) == 1; } catch { return false; }
+	}
+
+	public void StopSlotWatch()
+	{
+		try { core_slot_watch_stop(); } catch { }
+	}
+
+	public SlotWatchStatusDto PollSlotWatch()
+	{
+		SlotWatchStatusDto st = new SlotWatchStatusDto();
+		string json = TakeOwnedStr(core_slot_watch_poll());
+		if (string.IsNullOrEmpty(json))
+		{
+			return st;
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			return st;
+		}
+		st.Watching = GetBool(d, "watching");
+		st.FoundSlot = GetBool(d, "found_slot");
+		st.Ip = GetStr(d, "ip");
+		st.Port = GetInt(d, "port", 0);
+		st.Name = GetStr(d, "name");
+		st.Players = GetInt(d, "players", 0);
+		st.Max = GetInt(d, "max", 0);
+		st.Ping = GetInt(d, "ping", -1);
+		return st;
+	}
+
+	public ChatlogResultDto ReadChatlog(string path, int maxBytes, int maxLines, string query)
+	{
+		ChatlogResultDto res = new ChatlogResultDto();
+		uint mb = (maxBytes > 0) ? (uint)maxBytes : 0u;
+		uint ml = (maxLines > 0) ? (uint)maxLines : 0u;
+		string json = TakeOwnedStr(core_chatlog_read(ToUtf8(path ?? ""), mb, ml, ToUtf8(query ?? "")));
+		if (string.IsNullOrEmpty(json))
+		{
+			return res;
+		}
+		Dictionary<string, object> env = DeserializeDict(json);
+		if (env == null || !GetBool(env, "ok"))
+		{
+			return res;
+		}
+		Dictionary<string, object> d = GetDict(env, "data");
+		if (d == null)
+		{
+			return res;
+		}
+		res.Exists = GetBool(d, "exists");
+		res.Path = GetStr(d, "path");
+		res.FileSizeBytes = GetLong(d, "file_size_bytes", 0);
+		res.TotalLines = GetInt(d, "total_lines", 0);
+		res.MatchedCount = GetInt(d, "matched_count", 0);
+		res.Truncated = GetBool(d, "truncated");
+		res.Lines = GetStrList(d, "lines");
+		return res;
+	}
+
+	public GalleryScanResultDto ScanGallery(string dir, int maxItems)
+	{
+		GalleryScanResultDto res = new GalleryScanResultDto();
+		uint cap = (maxItems > 0) ? (uint)maxItems : 240u;
+		string json = TakeOwnedStr(core_gallery_scan(ToUtf8(dir ?? ""), cap));
+		if (string.IsNullOrEmpty(json))
+		{
+			return res;
+		}
+		Dictionary<string, object> d = DeserializeDict(json);
+		if (d == null)
+		{
+			return res;
+		}
+		res.Directory = GetStr(d, "directory");
+		res.Exists = GetBool(d, "exists");
+		res.TotalFound = GetInt(d, "total_found", 0);
+		object rawItems;
+		if (d.TryGetValue("items", out rawItems) && rawItems != null)
+		{
+			IList arr = rawItems as IList;
+			if (arr != null)
+			{
+				foreach (object obj in arr)
+				{
+					Dictionary<string, object> id = obj as Dictionary<string, object>;
+					if (id != null)
+					{
+						GalleryItemDto it = new GalleryItemDto();
+						it.Path = GetStr(id, "path");
+						it.Name = GetStr(id, "name");
+						it.SizeBytes = GetLong(id, "size_bytes", 0);
+						it.ModifiedEpoch = GetLong(id, "modified_epoch", 0);
+						res.Items.Add(it);
+					}
+				}
+			}
+		}
+		return res;
+	}
+
+	internal static void DiscordInit(string clientId)
+	{
+		try { core_discord_init(ToUtf8(clientId ?? "")); } catch { }
+	}
+
+	internal static void DiscordSetEnabled(bool enabled)
+	{
+		try { core_discord_set_enabled(enabled); } catch { }
+	}
+
+	internal static void DiscordPresenceLauncher()
+	{
+		try { core_discord_presence_launcher(); } catch { }
+	}
+
+	internal static void DiscordPresenceGame(string serverName, string ip, string port, int players, int max)
+	{
+		try { core_discord_presence_game(ToUtf8(serverName ?? ""), ToUtf8(ip ?? ""), ToUtf8(port ?? ""), players, max); } catch { }
+	}
+
+	internal static void DiscordClear()
+	{
+		try { core_discord_clear(); } catch { }
+	}
+
+	internal static void DiscordShutdown()
+	{
+		try { core_discord_shutdown(); } catch { }
+	}
+
+	internal static void AudioCue(string kind)
+	{
+		try { core_audio_cue(ToUtf8(kind ?? "")); } catch { }
+	}
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_settings_load(byte[] cfgPath);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_settings_save(byte[] cfgPath, byte[] json);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_alt_tab_set(byte[] gameDir, [MarshalAs(UnmanagedType.U1)] bool enable);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_reset_gta_set();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_db_fav_list();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_db_fav_upsert(byte[] ip, byte[] port, byte[] name);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern int core_db_fav_remove(byte[] ip, byte[] port);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_db_hist_list(uint limit);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_db_hist_record(byte[] ip, byte[] port, byte[] name);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern int core_db_hist_remove(byte[] ip, byte[] port);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_db_server_rename(byte[] ip, byte[] port, byte[] name);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_watchdog_poll();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_watchdog_stop();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern int core_is_game_running();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_query_server_details(byte[] host, ushort port);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern int core_slot_watch_start(byte[] host, ushort port);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_slot_watch_stop();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_slot_watch_poll();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_discord_init(byte[] clientId);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_discord_set_enabled([MarshalAs(UnmanagedType.U1)] bool enabled);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_discord_presence_launcher();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_discord_presence_game(byte[] serverName, byte[] ip, byte[] port, int players, int max);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_discord_clear();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern void core_discord_shutdown();
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_chatlog_read(byte[] path, uint maxBytes, uint maxLines, byte[] query);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern IntPtr core_gallery_scan(byte[] dir, uint maxItems);
+
+	[DllImport("samp_core.dll", CallingConvention = CallingConvention.Cdecl)]
+	private static extern int core_audio_cue(byte[] kind);
 
 	private static Dictionary<string, object> DeserializeDict(string json)
 	{
@@ -1104,30 +1783,56 @@ internal class RustCore : ICore
 		{
 			JavaScriptSerializer js = new JavaScriptSerializer();
 			IList rows = js.DeserializeObject(json) as IList;
-			if (rows == null)
-			{
-				return null;
-			}
-			List<string[]> result = new List<string[]>(rows.Count);
-			foreach (object rowObj in rows)
-			{
-				IList cols = rowObj as IList;
-				if (cols != null)
-				{
-					string[] arr = new string[cols.Count];
-					for (int i = 0; i < cols.Count; i++)
-					{
-						arr[i] = (cols[i] != null) ? cols[i].ToString() : "";
-					}
-					result.Add(arr);
-				}
-			}
-			return result;
+			return ParseStringMatrixList(rows);
 		}
 		catch
 		{
 			return null;
 		}
+	}
+
+	private static List<string[]> ParseStringMatrixList(IList rows)
+	{
+		if (rows == null)
+		{
+			return null;
+		}
+		List<string[]> result = new List<string[]>(rows.Count);
+		foreach (object rowObj in rows)
+		{
+			IList cols = rowObj as IList;
+			if (cols != null)
+			{
+				string[] arr = new string[cols.Count];
+				for (int i = 0; i < cols.Count; i++)
+				{
+					arr[i] = (cols[i] != null) ? cols[i].ToString() : "";
+				}
+				result.Add(arr);
+			}
+		}
+		return result;
+	}
+
+	private static CrashInfo ParseCrashInfo(Dictionary<string, object> cd)
+	{
+		if (cd == null)
+		{
+			return null;
+		}
+		CrashInfo ci = new CrashInfo();
+		ci.Timestamp = GetStr(cd, "timestamp");
+		ci.ExceptionCode = GetStr(cd, "exception_code");
+		ci.ExceptionName = GetStr(cd, "exception_name");
+		ci.FaultAddress = GetStr(cd, "fault_address");
+		ci.ModuleName = GetStr(cd, "module_name");
+		ci.ModuleOffset = GetStr(cd, "module_offset");
+		ci.ThaiExplanation = GetStr(cd, "thai_explanation");
+		ci.Suggestion = GetStr(cd, "suggestion");
+		ci.WorkingSetMb = GetLong(cd, "working_set_mb", 0);
+		ci.VirtualMemMb = GetLong(cd, "virtual_mem_mb", 0);
+		ci.LoadedModules = GetStrList(cd, "loaded_modules");
+		return ci;
 	}
 
 	private static string GetStr(Dictionary<string, object> d, string key)

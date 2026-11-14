@@ -294,8 +294,7 @@ internal class RoundedBtn : Control, IButtonControl
 			TextFormatFlags flags = (alignLeft ? TextFormatFlags.Left : TextFormatFlags.HorizontalCenter)
 				| TextFormatFlags.VerticalCenter
 				| TextFormatFlags.EndEllipsis
-				| TextFormatFlags.NoPrefix
-				| TextFormatFlags.NoPadding;
+				| TextFormatFlags.NoPrefix;
 			if (alignLeft)
 			{
 				int leftPad = DpiHelper.S(14);
@@ -416,8 +415,18 @@ internal class RoundedBtn : Control, IButtonControl
 	{
 		if (disposing)
 		{
-			if (tmr != null) tmr.Dispose();
-			if (pulseTmr != null) pulseTmr.Dispose();
+			if (tmr != null)
+			{
+				tmr.Stop();
+				tmr.Dispose();
+				tmr = null;
+			}
+			if (pulseTmr != null)
+			{
+				pulseTmr.Stop();
+				pulseTmr.Dispose();
+				pulseTmr = null;
+			}
 		}
 		base.Dispose(disposing);
 	}

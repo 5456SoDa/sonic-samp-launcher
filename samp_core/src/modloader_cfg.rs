@@ -151,6 +151,15 @@ fn parse_ini_state(content: &str) -> (String, bool, HashSet<String>, HashMap<Str
     (profile, ignore_all, ignored, priorities)
 }
 
+pub(crate) fn ignored_mod_folders(game_dir: &Path) -> (bool, HashSet<String>) {
+    if !game_dir.join("modloader").is_dir() {
+        return (false, HashSet::new());
+    }
+    let ini_text = read_ini_source(game_dir);
+    let (_profile, ignore_all, ignored, _priorities) = parse_ini_state(&ini_text);
+    (ignore_all, ignored)
+}
+
 pub fn list_modloader_state(game_dir: &Path) -> Result<ModLoaderState, String> {
     let mod_dir = game_dir.join("modloader");
     if !mod_dir.is_dir() {
@@ -202,6 +211,16 @@ pub fn list_modloader_state(game_dir: &Path) -> Result<ModLoaderState, String> {
         ignore_all,
         folders,
     })
+}
+
+fn ensure_writable(path: &Path) {
+    if let Ok(meta) = fs::metadata(path) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(path, perms);
+        }
+    }
 }
 
 pub fn set_folder_priority(game_dir: &Path, folder_name: &str, priority: u32) -> Result<(), String> {
@@ -261,6 +280,7 @@ pub fn set_folder_priority(game_dir: &Path, folder_name: &str, priority: u32) ->
     }
 
     let ini_path = mod_dir.join("modloader.ini");
+    ensure_writable(&ini_path);
     let final_text = out_lines.join("\r\n") + "\r\n";
     fs::write(&ini_path, final_text)
         .map_err(|e| format!("บันทึก priority ใน modloader.ini ไม่สำเร็จ: {}", e))?;
@@ -275,6 +295,16 @@ pub fn save_modloader_state(
     let mod_dir = game_dir.join("modloader");
     if !mod_dir.is_dir() {
         return Err("ไม่พบโฟลเดอร์ modloader ในโฟลเดอร์เกม".into());
+    }
+
+    let mut clean_disabled: Vec<String> = Vec::new();
+    let mut seen_disabled: HashSet<String> = HashSet::new();
+    for m in disabled_mods {
+        let t = m.trim();
+        let low = t.to_ascii_lowercase();
+        if !t.is_empty() && low != "_ignore" && seen_disabled.insert(low) {
+            clean_disabled.push(t.to_string());
+        }
     }
 
     let raw = read_ini_source(game_dir);
@@ -305,11 +335,8 @@ pub fn save_modloader_state(
             } else if cur_sec.eq_ignore_ascii_case(&ign_sec) {
                 has_ign_sec = true;
                 out_lines.push("_ignore".to_string());
-                for m in disabled_mods {
-                    let t = m.trim();
-                    if !t.is_empty() && !t.eq_ignore_ascii_case("_ignore") {
-                        out_lines.push(t.to_string());
-                    }
+                for t in &clean_disabled {
+                    out_lines.push(t.clone());
                 }
                 skipping_ign_entries = true;
             }
@@ -341,29 +368,24 @@ pub fn save_modloader_state(
         out_lines.push(format!("IgnoreAllMods  = {}", ignore_all));
         wrote_ignore_all = true;
     }
-    if !has_cfg_sec {
-        out_lines.push(String::new());
-        out_lines.push(format!("[{}]", cfg_sec));
-        out_lines.push(format!("IgnoreAllMods  = {}", ignore_all));
-    } else if !wrote_ignore_all {
-        // Already appended above if at EOF; if mid-file without key, append safe section tail
-        out_lines.push(String::new());
-        out_lines.push(format!("[{}]", cfg_sec));
+    if !has_cfg_sec || !wrote_ignore_all {
+        if !has_cfg_sec {
+            out_lines.push(String::new());
+            out_lines.push(format!("[{}]", cfg_sec));
+        }
         out_lines.push(format!("IgnoreAllMods  = {}", ignore_all));
     }
     if !has_ign_sec {
         out_lines.push(String::new());
         out_lines.push(format!("[{}]", ign_sec));
         out_lines.push("_ignore".to_string());
-        for m in disabled_mods {
-            let t = m.trim();
-            if !t.is_empty() && !t.eq_ignore_ascii_case("_ignore") {
-                out_lines.push(t.to_string());
-            }
+        for t in &clean_disabled {
+            out_lines.push(t.clone());
         }
     }
 
     let ini_path = mod_dir.join("modloader.ini");
+    ensure_writable(&ini_path);
     let final_text = out_lines.join("\r\n") + "\r\n";
     fs::write(&ini_path, final_text)
         .map_err(|e| format!("บันทึก modloader.ini ไม่สำเร็จ: {}", e))?;

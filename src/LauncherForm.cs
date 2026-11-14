@@ -37,6 +37,42 @@ internal partial class LauncherForm : Form
 	private Font fNav;
 	private Font fStat;
 	private Font fBadge;
+	private readonly Dictionary<string, Font> fontCache = new Dictionary<string, Font>();
+	private readonly List<IDisposable> ownedDisposables = new List<IDisposable>();
+
+	internal Font GetCachedFont(string family, float sizePt, FontStyle style)
+	{
+		string key = family + "|" + sizePt.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + ((int)style);
+		Font f;
+		if (!fontCache.TryGetValue(key, out f) || f == null)
+		{
+			f = new Font(family, sizePt, style);
+			fontCache[key] = f;
+		}
+		return f;
+	}
+
+	internal T TrackDisposable<T>(T obj) where T : class, IDisposable
+	{
+		if (obj != null && !ownedDisposables.Contains(obj))
+		{
+			ownedDisposables.Add(obj);
+		}
+		return obj;
+	}
+
+	internal void RestoreFromTrayOrHidden()
+	{
+		if (base.IsDisposed) return;
+		base.ShowInTaskbar = true;
+		if (!base.Visible) base.Show();
+		if (base.WindowState == FormWindowState.Minimized)
+		{
+			base.WindowState = FormWindowState.Normal;
+		}
+		base.Opacity = 1.0;
+		base.Activate();
+	}
 
 	private RoundedBtn btnNavPlay;
 	private RoundedBtn btnNavSrv;
@@ -50,7 +86,6 @@ internal partial class LauncherForm : Form
 	private RichTextBox txtChatLog;
 	private TextBox txtChatSearch;
 	private Label lblChatInfo;
-	private List<string> chatLines = new List<string>();
 	private Panel pnlPlay;
 	private Panel pnlSrv;
 	private Panel pnlSet;
@@ -260,7 +295,6 @@ internal partial class LauncherForm : Form
 		fStat = new Font("Segoe UI Semibold", 10f);
 		fBadge = new Font("Segoe UI", 8.5f, FontStyle.Bold);
 		BuildUi();
-		DpiHelper.ScaleControlTree(this);
 		uiBuilt = true;
 		PerformResponsiveLayout();
 		LoadConfig();
@@ -318,13 +352,23 @@ internal partial class LauncherForm : Form
 		Invalidate();
 	}
 
+	private void SetRegionSafe(Region nextRegion)
+	{
+		Region old = base.Region;
+		base.Region = nextRegion;
+		if (old != null && !object.ReferenceEquals(old, nextRegion))
+		{
+			try { old.Dispose(); } catch { }
+		}
+	}
+
 	private void UpdateRegion()
 	{
 		if (base.WindowState == FormWindowState.Maximized || dwmApplied)
 		{
 			if (base.Region != null)
 			{
-				base.Region = null;
+				SetRegionSafe(null);
 			}
 			return;
 		}
@@ -333,11 +377,14 @@ internal partial class LauncherForm : Form
 		{
 			if (base.Region != null)
 			{
-				base.Region = null;
+				SetRegionSafe(null);
 			}
 			return;
 		}
-		base.Region = new Region(RoundRect(new Rectangle(0, 0, base.Width, base.Height), DpiHelper.S(14)));
+		using (GraphicsPath gp = RoundRect(new Rectangle(0, 0, base.Width, base.Height), DpiHelper.S(14)))
+		{
+			SetRegionSafe(new Region(gp));
+		}
 	}
 
 	protected override void OnPaint(PaintEventArgs e)
@@ -353,8 +400,9 @@ internal partial class LauncherForm : Form
 		if (base.WindowState != FormWindowState.Maximized && !(dwmApplied && isWin11OrNewer))
 		{
 			using (Pen pen = new Pen(Color.FromArgb(65, colAccent), 1f))
+			using (GraphicsPath gp = RoundRect(new Rectangle(0, 0, base.Width - 1, base.Height - 1), DpiHelper.S(14)))
 			{
-				graphics.DrawPath(pen, RoundRect(new Rectangle(0, 0, base.Width - 1, base.Height - 1), DpiHelper.S(14)));
+				graphics.DrawPath(pen, gp);
 			}
 		}
 	}
@@ -855,6 +903,10 @@ internal partial class LauncherForm : Form
 			if (!target.IsDisposed)
 			{
 				target.Location = new Point(baseX + (int)((float)slidePx * (1f - t)), baseY);
+				if (t >= 1f)
+				{
+					target.Invalidate(true);
+				}
 			}
 		});
 		if (idx == 0)
@@ -957,7 +1009,7 @@ internal partial class LauncherForm : Form
 
 	private RoundedBtn MakeWinBtn(string glyph)
 	{
-		RoundedBtn roundedBtn = new RoundedBtn(glyph, colBg, colField, colSub, 8, new Font("Segoe UI", 11f, FontStyle.Bold));
+		RoundedBtn roundedBtn = new RoundedBtn(glyph, colBg, colField, colSub, 8, GetCachedFont("Segoe UI", 11f, FontStyle.Bold));
 		roundedBtn.Size = new Size(34, 28);
 		base.Controls.Add(roundedBtn);
 		roundedBtn.BringToFront();
@@ -966,7 +1018,7 @@ internal partial class LauncherForm : Form
 
 	private RoundedBtn MakeMiniBtn(string text, int x, int y, int w, int h)
 	{
-		RoundedBtn roundedBtn = new RoundedBtn(text, colField, colFieldHover, colText, 10, new Font("Segoe UI Semibold", 9f, FontStyle.Bold));
+		RoundedBtn roundedBtn = new RoundedBtn(text, colField, colFieldHover, colText, 10, GetCachedFont("Segoe UI Semibold", 9f, FontStyle.Bold));
 		roundedBtn.BorderColor = Color.FromArgb(35, 52, 80);
 		roundedBtn.Location = new Point(x, y);
 		roundedBtn.Size = new Size(w, h);
@@ -1168,6 +1220,8 @@ internal partial class LauncherForm : Form
 		if (btnSetBrowse != null) btnSetBrowse.BorderColor = c;
 		if (btnSetModFolder != null) btnSetModFolder.BorderColor = c;
 		if (btnHealthRecheck != null) btnHealthRecheck.BorderColor = c;
+		if (btnSetTurboShield != null) btnSetTurboShield.BorderColor = c;
+		if (btnTurboShield != null) btnTurboShield.BorderColor = c;
 		if (btnSetTestSound != null) btnSetTestSound.BorderColor = c;
 		if (btnSrvAdd != null) btnSrvAdd.BorderColor = c;
 		if (btnSrvInfo != null) btnSrvInfo.BorderColor = c;
@@ -1220,7 +1274,8 @@ internal partial class LauncherForm : Form
 			if (txtChatSearch != null && txtChatSearch.Focused)
 			{
 				ForceText(txtChatSearch, "");
-				FilterChatLines();
+				if (chatSearchTimer != null) chatSearchTimer.Stop();
+				LoadChatLines();
 				return true;
 			}
 		}
@@ -1321,6 +1376,31 @@ internal partial class LauncherForm : Form
 			return;
 		}
 
+		if (m.Msg == Program.WM_USER_RESTORE)
+		{
+			BeginInvoke((MethodInvoker)delegate
+			{
+				RestoreFromTrayOrHidden();
+			});
+			m.Result = IntPtr.Zero;
+			return;
+		}
+		if (m.Msg == DpiHelper.WM_DPICHANGED)
+		{
+			if (DpiHelper.HandleDpiChanged(this, ref m))
+			{
+				base.MinimumSize = DpiHelper.Sz(920, 580);
+				if (uiBuilt)
+				{
+					PerformResponsiveLayout();
+				}
+				UpdateRegion();
+				RenderBg();
+				Invalidate(true);
+				m.Result = IntPtr.Zero;
+				return;
+			}
+		}
 		if (m.Msg == WM_COPYDATA)
 		{
 			try
@@ -1349,9 +1429,9 @@ internal partial class LauncherForm : Form
 		base.WndProc(ref m);
 	}
 
-	public void ApplySampUrl(string url)
+	public bool ApplySampUrl(string url)
 	{
-		if (string.IsNullOrEmpty(url)) return;
+		if (string.IsNullOrEmpty(url)) return false;
 		string text = url.Trim();
 		if (text.ToLowerInvariant().StartsWith("samp://"))
 		{
@@ -1373,7 +1453,9 @@ internal partial class LauncherForm : Form
 			ShowPage(0);
 			QueryPlayServer();
 			ToastOk("โหลดที่อยู่เซิร์ฟเวอร์จาก samp:// แล้ว");
+			return true;
 		}
+		return false;
 	}
 
 	protected override void OnShown(EventArgs e)
@@ -1384,8 +1466,10 @@ internal partial class LauncherForm : Form
 			base.Opacity = t;
 		});
 		RunHealthCheck();
-		ApplySampUrl(bootUrl);
-		QueryPlayServer();
+		if (!ApplySampUrl(bootUrl))
+		{
+			QueryPlayServer();
+		}
 		if (swAuto.Checked)
 		{
 			string text2 = FieldVal(txtIp);
@@ -1453,6 +1537,19 @@ internal partial class LauncherForm : Form
 			if (fNav != null) fNav.Dispose();
 			if (fStat != null) fStat.Dispose();
 			if (fBadge != null) fBadge.Dispose();
+			if (nickCms != null) { nickCms.Dispose(); nickCms = null; }
+			if (srvCms != null) { srvCms.Dispose(); srvCms = null; }
+			foreach (Font cf in fontCache.Values)
+			{
+				if (cf != null) { try { cf.Dispose(); } catch { } }
+			}
+			fontCache.Clear();
+			foreach (IDisposable dObj in ownedDisposables)
+			{
+				if (dObj != null) { try { dObj.Dispose(); } catch { } }
+			}
+			ownedDisposables.Clear();
+			SetRegionSafe(null);
 		}
 		base.Dispose(disposing);
 	}

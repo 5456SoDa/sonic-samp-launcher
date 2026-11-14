@@ -1,12 +1,29 @@
+# Build outputs
 target/
+bin/
+obj/
 *.exe
 *.dll
 *.pdb
 *.lib
 *.exp
 *.obj
+*.asi
+
+# Visual Studio / IDE
 .vs/
 *.user
 *.suo
+.idea/
+.vscode/
+
+# Runtime / Local configurations & logs (user-specific)
+*.cfg
+*.log
+*.db
+*.db-shm
+*.db-wal
 backup/
-SampLauncher_test.exe
+dist/
+releases/
+tools/us_dump*.txt

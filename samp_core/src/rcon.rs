@@ -62,8 +62,10 @@ pub fn rcon_send_to_addr(addr: SocketAddr, pass: &str, cmd: &str) -> Result<Stri
 
     for i in 0..64 {
         if i == 1 {
-            // Subsequent multi-packet lines arrive quickly; avoid waiting a full 2.5s tail.
-            let _ = sock.set_read_timeout(Some(Duration::from_millis(250)));
+            // Subsequent multi-packet lines arrive quickly; shorten idle tail wait.
+            let _ = sock.set_read_timeout(Some(Duration::from_millis(160)));
+        } else if i == 2 {
+            let _ = sock.set_read_timeout(Some(Duration::from_millis(80)));
         }
         match sock.recv(&mut buf) {
             Ok(n) => {
@@ -71,6 +73,8 @@ pub fn rcon_send_to_addr(addr: SocketAddr, pass: &str, cmd: &str) -> Result<Stri
                     if !line.is_empty() {
                         total_chars += line.len();
                         lines.push(line);
+                    } else if i > 0 {
+                        break;
                     }
                 }
             }

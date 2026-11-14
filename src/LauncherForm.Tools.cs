@@ -8,82 +8,10 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
-internal sealed class ChatTailResult
-{
-	public List<string> Lines = new List<string>();
-	public bool Truncated;
-}
-
-internal static class ChatLogReader
-{
-	public static ChatTailResult ReadTail(string path, int maxBytes, int maxLines)
-	{
-		ChatTailResult res = new ChatTailResult();
-		using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-		{
-			long len = fs.Length;
-			bool seeked = len > maxBytes;
-			int toRead = (int)(seeked ? maxBytes : len);
-			if (seeked)
-			{
-				fs.Seek(len - toRead, SeekOrigin.Begin);
-			}
-			byte[] raw = new byte[toRead];
-			int readTotal = 0;
-			while (readTotal < toRead)
-			{
-				int r = fs.Read(raw, readTotal, toRead - readTotal);
-				if (r <= 0) break;
-				readTotal += r;
-			}
-			int start = 0;
-			if (!seeked && readTotal >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF)
-			{
-				start = 3;
-			}
-			else if (seeked)
-			{
-				// Advance past partial first line/codepoint so UTF-8 boundary stays valid
-				int nl = Array.IndexOf(raw, (byte)'\n', 0, readTotal);
-				if (nl >= 0 && nl + 1 < readTotal)
-				{
-					start = nl + 1;
-				}
-				res.Truncated = true;
-			}
-			int count = Math.Max(0, readTotal - start);
-			string content;
-			try
-			{
-				content = new UTF8Encoding(false, true).GetString(raw, start, count);
-			}
-			catch
-			{
-				content = Encoding.GetEncoding(874).GetString(raw, start, count);
-			}
-			List<string> parsed = new List<string>();
-			using (StringReader sr = new StringReader(content))
-			{
-				string line;
-				while ((line = sr.ReadLine()) != null)
-				{
-					parsed.Add(line);
-				}
-			}
-			if (parsed.Count > maxLines)
-			{
-				res.Truncated = true;
-				parsed.RemoveRange(0, parsed.Count - maxLines);
-			}
-			res.Lines = parsed;
-		}
-		return res;
-	}
-}
-
 internal partial class LauncherForm
 {
 	private int chatLoadGen;
+	private System.Windows.Forms.Timer chatSearchTimer;
 	private RoundedBtn btnGalRefresh;
 	private RoundedBtn btnGalFolder;
 	private RoundedBtn btnChatReload;
@@ -148,9 +76,20 @@ internal partial class LauncherForm
 	private void BuildChatPage()
 	{
 		txtChatSearch = AddField(pnlChat, "🔍  พิมพ์คำค้นหา (ชื่อผู้เล่น, คำสั่ง, ประวัติการซื้อขาย, แชท)...", 0, 0, 370);
+		chatSearchTimer = TrackDisposable(new System.Windows.Forms.Timer());
+		chatSearchTimer.Interval = 150;
+		chatSearchTimer.Tick += delegate
+		{
+			chatSearchTimer.Stop();
+			LoadChatLines();
+		};
 		txtChatSearch.TextChanged += delegate
 		{
-			FilterChatLines();
+			if (chatSearchTimer != null)
+			{
+				chatSearchTimer.Stop();
+				chatSearchTimer.Start();
+			}
 		};
 
 		btnChatReload = MakeMiniBtn("↻  รีเฟรช", 380, 0, 90, 42);
@@ -210,7 +149,7 @@ internal partial class LauncherForm
 		txtChatLog.BorderStyle = BorderStyle.None;
 		txtChatLog.BackColor = colField;
 		txtChatLog.ForeColor = Color.FromArgb(235, 245, 255);
-		txtChatLog.Font = new Font("Leelawadee UI", 9.75f);
+		txtChatLog.Font = GetCachedFont("Leelawadee UI", 9.75f, FontStyle.Regular);
 		txtChatLog.ReadOnly = true;
 		txtChatLog.WordWrap = false;
 		txtChatLog.ScrollBars = RichTextBoxScrollBars.Both;
@@ -223,39 +162,45 @@ internal partial class LauncherForm
 	{
 		chatLoadGen++;
 		int gen = chatLoadGen;
-		chatLines.Clear();
+		string query = FieldVal(txtChatSearch).Trim();
 		string chatlogPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "GTA San Andreas User Files", "SAMP", "chatlog.txt");
-		if (!File.Exists(chatlogPath))
-		{
-			if (lblChatInfo != null)
-			{
-				lblChatInfo.Text = "ยังไม่พบไฟล์ chatlog.txt (ไฟล์จะถูกสร้างอัตโนมัติเมื่อเข้าเล่นในเซิร์ฟเวอร์)";
-			}
-			if (txtChatLog != null)
-			{
-				txtChatLog.Text = "--- ยังไม่มีประวัติแชท ---\nเข้าเล่นในเซิร์ฟเวอร์ SA-MP เพื่อเริ่มเก็บบันทึกข้อความสนทนา";
-			}
-			return;
-		}
 		if (lblChatInfo != null)
 		{
-			lblChatInfo.Text = "กำลังโหลดบันทึกแชทล่าสุด...";
+			lblChatInfo.Text = string.IsNullOrEmpty(query) ? "กำลังโหลดบันทึกแชทล่าสุด..." : "กำลังค้นหาในบันทึกแชท...";
 		}
 		ThreadPool.QueueUserWorkItem(delegate
 		{
 			try
 			{
-				ChatTailResult res = ChatLogReader.ReadTail(chatlogPath, 2 * 1024 * 1024, 5000);
+				ChatlogResultDto res = core.ReadChatlog(chatlogPath, 2 * 1024 * 1024, 5000, query);
 				if (!base.IsDisposed)
 				{
 					BeginInvoke((MethodInvoker)delegate
 					{
-						if (gen != chatLoadGen || base.IsDisposed)
+						if (gen != chatLoadGen || base.IsDisposed || txtChatLog == null || lblChatInfo == null)
 						{
 							return;
 						}
-						chatLines = res.Lines;
-						FilterChatLines(res.Truncated);
+						if (res == null || !res.Exists)
+						{
+							lblChatInfo.Text = "ยังไม่พบไฟล์ chatlog.txt (ไฟล์จะถูกสร้างอัตโนมัติเมื่อเข้าเล่นในเซิร์ฟเวอร์)";
+							txtChatLog.Text = "--- ยังไม่มีประวัติแชท ---\nเข้าเล่นในเซิร์ฟเวอร์ SA-MP เพื่อเริ่มเก็บบันทึกข้อความสนทนา";
+							return;
+						}
+						txtChatLog.Text = (res.Lines != null && res.Lines.Count > 0)
+							? string.Join("\r\n", res.Lines.ToArray()) + "\r\n"
+							: "";
+						string note = res.Truncated ? " (แสดงสูงสุด 5,000 บรรทัดล่าสุด)" : "";
+						if (!string.IsNullOrEmpty(query))
+						{
+							lblChatInfo.Text = string.Format("ผลการค้นหา: พบ {0} จาก {1} บรรทัด{2}", res.MatchedCount, res.TotalLines, note);
+						}
+						else
+						{
+							lblChatInfo.Text = string.Format("แสดงประวัติแชท {0} บรรทัด{1}", res.TotalLines, note);
+						}
+						txtChatLog.SelectionStart = txtChatLog.Text.Length;
+						txtChatLog.ScrollToCaret();
 					});
 				}
 			}
@@ -279,46 +224,6 @@ internal partial class LauncherForm
 				}
 			}
 		});
-	}
-
-	private void FilterChatLines()
-	{
-		FilterChatLines(false);
-	}
-
-	private void FilterChatLines(bool truncated)
-	{
-		if (txtChatLog == null || lblChatInfo == null)
-		{
-			return;
-		}
-		string query = FieldVal(txtChatSearch).Trim();
-		StringBuilder sb = new StringBuilder();
-		int matchCount = 0;
-
-		for (int i = 0; i < chatLines.Count; i++)
-		{
-			string line = chatLines[i];
-			if (string.IsNullOrEmpty(query) || line.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				sb.AppendLine(line);
-				matchCount++;
-			}
-		}
-
-		txtChatLog.Text = sb.ToString();
-		string note = truncated ? " (แสดงสูงสุด 5,000 บรรทัดล่าสุด)" : "";
-		if (!string.IsNullOrEmpty(query))
-		{
-			lblChatInfo.Text = string.Format("ผลการค้นหา: พบ {0} จาก {1} บรรทัด{2}", matchCount, chatLines.Count, note);
-		}
-		else
-		{
-			lblChatInfo.Text = string.Format("แสดงประวัติแชท {0} บรรทัด{1}", chatLines.Count, note);
-		}
-
-		txtChatLog.SelectionStart = txtChatLog.Text.Length;
-		txtChatLog.ScrollToCaret();
 	}
 
 	private string ShotDir()
@@ -346,138 +251,166 @@ internal partial class LauncherForm
 	{
 		string path = ShotDir();
 		List<Image> list = new List<Image>();
-		foreach (Control control in galFlow.Controls)
+		galFlow.SuspendLayout();
+		try
 		{
-			PictureBox pictureBox = control as PictureBox;
-			if (pictureBox != null && pictureBox.Image != null)
+			while (galFlow.Controls.Count > 0)
 			{
-				list.Add(pictureBox.Image);
+				Control control = galFlow.Controls[0];
+				PictureBox pictureBox = control as PictureBox;
+				if (pictureBox != null && pictureBox.Image != null)
+				{
+					list.Add(pictureBox.Image);
+					pictureBox.Image = null;
+				}
+				galFlow.Controls.RemoveAt(0);
+				try
+				{
+					if (control.Region != null)
+					{
+						Region oldReg = control.Region;
+						control.Region = null;
+						oldReg.Dispose();
+					}
+					control.Dispose();
+				}
+				catch { }
 			}
 		}
-		galFlow.Controls.Clear();
+		finally
+		{
+			galFlow.ResumeLayout();
+		}
 		foreach (Image item in list)
 		{
-			try
-			{
-				item.Dispose();
-			}
-			catch
-			{
-			}
+			try { item.Dispose(); } catch { }
 		}
 		galGen++;
 		int gen = galGen;
-		int num = 0;
-		if (Directory.Exists(path))
+		currentGalleryPaths.Clear();
+		galCount.Text = "กำลังโหลด...";
+		ThreadPool.QueueUserWorkItem(delegate
 		{
-			List<FileInfo> list2 = new List<FileInfo>();
-			string[] files = Directory.GetFiles(path);
-			foreach (string text in files)
+			GalleryScanResultDto gres = core.ScanGallery(path, 150);
+			if (base.IsDisposed || gen != galGen)
 			{
-				switch (Path.GetExtension(text).ToLowerInvariant())
+				return;
+			}
+			List<string> pathsSnapshot = new List<string>();
+			if (gres != null && gres.Items != null)
+			{
+				foreach (GalleryItemDto item2 in gres.Items)
 				{
-				case ".png":
-				case ".jpg":
-				case ".bmp":
-					list2.Add(new FileInfo(text));
-					break;
+					if (item2 != null && !string.IsNullOrEmpty(item2.Path))
+					{
+						pathsSnapshot.Add(item2.Path);
+					}
 				}
 			}
-			list2.Sort((FileInfo a, FileInfo b) => b.LastWriteTime.CompareTo(a.LastWriteTime));
-			if (list2.Count > 150)
+			int totalFound = (gres != null) ? gres.TotalFound : pathsSnapshot.Count;
+			try
 			{
-				list2.RemoveRange(150, list2.Count - 150);
-			}
-			currentGalleryPaths.Clear();
-			foreach (FileInfo item2 in list2)
-			{
-				currentGalleryPaths.Add(item2.FullName);
-			}
-			num = list2.Count;
-			List<string> pathsSnapshot = new List<string>(currentGalleryPaths);
-			ThreadPool.QueueUserWorkItem(delegate
-			{
-				List<KeyValuePair<string, Image>> batch = new List<KeyValuePair<string, Image>>(8);
-				for (int i = 0; i < pathsSnapshot.Count; i++)
+				if (!base.IsDisposed)
 				{
-					if (base.IsDisposed || gen != galGen)
+					BeginInvoke((MethodInvoker)delegate
 					{
-						break;
-					}
-					string path2 = pathsSnapshot[i];
-					Image thumb = MakeThumb(path2);
-					if (thumb != null)
-					{
-						batch.Add(new KeyValuePair<string, Image>(path2, thumb));
-					}
-					if (batch.Count >= 8 || (i == pathsSnapshot.Count - 1 && batch.Count > 0))
-					{
-						List<KeyValuePair<string, Image>> dispatch = batch;
-						batch = new List<KeyValuePair<string, Image>>(8);
-						try
+						if (galFlow.IsDisposed || gen != galGen) return;
+						currentGalleryPaths.Clear();
+						currentGalleryPaths.AddRange(pathsSnapshot);
+						galCount.Text = (totalFound > pathsSnapshot.Count)
+							? (totalFound + " รูป (แสดง " + pathsSnapshot.Count + " ล่าสุด)")
+							: (pathsSnapshot.Count + " รูป");
+						if (pathsSnapshot.Count == 0)
 						{
-							if (!base.IsDisposed)
-							{
-								BeginInvoke((MethodInvoker)delegate
-								{
-									if (galFlow.IsDisposed || gen != galGen)
-									{
-										foreach (KeyValuePair<string, Image> kv in dispatch)
-										{
-											kv.Value.Dispose();
-										}
-										return;
-									}
-									galFlow.SuspendLayout();
-									try
-									{
-										foreach (KeyValuePair<string, Image> kv in dispatch)
-										{
-											string shotPath = kv.Key;
-											PictureBox pictureBox2 = new PictureBox();
-											pictureBox2.Image = kv.Value;
-											pictureBox2.Size = kv.Value.Size;
-											pictureBox2.SizeMode = PictureBoxSizeMode.StretchImage;
-											pictureBox2.BackColor = colField;
-											pictureBox2.Padding = new Padding(2);
-											pictureBox2.Cursor = Cursors.Hand;
-											pictureBox2.Click += delegate
-											{
-												OpenShotViewer(shotPath);
-											};
-											galFlow.Controls.Add(pictureBox2);
-										}
-									}
-									finally
-									{
-										galFlow.ResumeLayout();
-									}
-								});
-							}
-							else
-							{
-								foreach (KeyValuePair<string, Image> kv in dispatch) kv.Value.Dispose();
-							}
+							Label label = new Label();
+							label.Text = "ยังไม่มีสกรีนช็อต — เข้าเกมแล้วกด F8 ถ่ายรูป แล้วรีเฟรชที่นี่";
+							label.ForeColor = colSub;
+							label.Font = fSub;
+							label.AutoSize = true;
+							label.Padding = new Padding(16, 20, 8, 8);
+							galFlow.Controls.Add(label);
 						}
-						catch
+					});
+				}
+			}
+			catch { }
+			if (pathsSnapshot.Count == 0)
+			{
+				return;
+			}
+			List<KeyValuePair<string, Image>> batch = new List<KeyValuePair<string, Image>>(8);
+			for (int i = 0; i < pathsSnapshot.Count; i++)
+			{
+				if (base.IsDisposed || gen != galGen)
+				{
+					break;
+				}
+				string path2 = pathsSnapshot[i];
+				Image thumb = MakeThumb(path2);
+				if (thumb != null)
+				{
+					batch.Add(new KeyValuePair<string, Image>(path2, thumb));
+				}
+				if (batch.Count >= 8 || (i == pathsSnapshot.Count - 1 && batch.Count > 0))
+				{
+					List<KeyValuePair<string, Image>> dispatch = batch;
+					batch = new List<KeyValuePair<string, Image>>(8);
+					try
+					{
+						if (!base.IsDisposed)
+						{
+							BeginInvoke((MethodInvoker)delegate
+							{
+								if (galFlow.IsDisposed || gen != galGen)
+								{
+									foreach (KeyValuePair<string, Image> kv in dispatch)
+									{
+										kv.Value.Dispose();
+									}
+									return;
+								}
+								galFlow.SuspendLayout();
+								try
+								{
+									foreach (KeyValuePair<string, Image> kv in dispatch)
+									{
+										string shotPath = kv.Key;
+										PictureBox pictureBox2 = new PictureBox();
+										pictureBox2.Image = kv.Value;
+										pictureBox2.Size = kv.Value.Size;
+										pictureBox2.SizeMode = PictureBoxSizeMode.StretchImage;
+										pictureBox2.BackColor = colField;
+										pictureBox2.Padding = new Padding(2);
+										pictureBox2.Cursor = Cursors.Hand;
+										pictureBox2.Click += delegate
+										{
+											OpenShotViewer(shotPath);
+										};
+										galFlow.Controls.Add(pictureBox2);
+									}
+								}
+								finally
+								{
+									galFlow.ResumeLayout();
+								}
+							});
+						}
+						else
 						{
 							foreach (KeyValuePair<string, Image> kv in dispatch) kv.Value.Dispose();
 						}
 					}
+					catch
+					{
+						foreach (KeyValuePair<string, Image> kv in dispatch) kv.Value.Dispose();
+					}
 				}
-			});
-		}
-		if (num == 0)
-		{
-			Label label = new Label();
-			label.Text = "ยังไม่มีสกรีนช็อต — เข้าเกมแล้วกด F8 ถ่ายรูป แล้วรีเฟรชที่นี่";
-			label.ForeColor = colSub;
-			label.Font = fSub;
-			label.AutoSize = true;
-			label.Padding = new Padding(16, 20, 8, 8);
-			galFlow.Controls.Add(label);
-		}
-		galCount.Text = num + " รูป";
+			}
+			foreach (KeyValuePair<string, Image> leftover in batch)
+			{
+				try { leftover.Value.Dispose(); } catch { }
+			}
+		});
 	}
 
 	private Image MakeThumb(string path)
@@ -512,7 +445,9 @@ internal partial class LauncherForm
 	{
 		try
 		{
-			new ViewerForm(path, currentGalleryPaths).Show(this);
+			ViewerForm vf = new ViewerForm(path, currentGalleryPaths);
+			vf.FormClosed += delegate { vf.Dispose(); };
+			vf.Show(this);
 		}
 		catch (Exception ex)
 		{
@@ -554,7 +489,7 @@ internal partial class LauncherForm
 		txtRconOut.ReadOnly = true;
 		txtRconOut.BackColor = Color.FromArgb(9, 12, 18);
 		txtRconOut.ForeColor = colOk;
-		txtRconOut.Font = new Font("Consolas", 10f);
+		txtRconOut.Font = GetCachedFont("Consolas", 10f, FontStyle.Regular);
 		txtRconOut.BorderStyle = BorderStyle.FixedSingle;
 		txtRconOut.Location = new Point(0, 182);
 		txtRconOut.Size = new Size(668, 180);

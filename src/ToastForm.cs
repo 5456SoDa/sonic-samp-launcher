@@ -6,7 +6,13 @@ using System.Windows.Forms;
 
 internal class ToastForm : Form
 {
+	private static readonly System.Collections.Generic.List<ToastForm> activeToasts = new System.Collections.Generic.List<ToastForm>();
 	private Timer autoClose;
+	private Timer fadeTimer;
+	private Font fTitle;
+	private Font fBody;
+	private Font fBtnBold;
+	private Font fBtnNorm;
 
 	public event Action OnJoin;
 
@@ -17,10 +23,15 @@ internal class ToastForm : Form
 		base.TopMost = true;
 		base.StartPosition = FormStartPosition.Manual;
 		BackColor = Color.FromArgb(17, 17, 24);
+		fTitle = new Font("Segoe UI Semibold", 13f, FontStyle.Bold);
+		fBody = new Font("Segoe UI", 9.5f);
+		fBtnBold = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold);
+		fBtnNorm = new Font("Segoe UI", 9.5f);
+
 		Label value = new Label
 		{
 			Text = "\ud83d\udd14  " + title,
-			Font = new Font("Segoe UI Semibold", 13f, FontStyle.Bold),
+			Font = fTitle,
 			ForeColor = Color.FromArgb(90, 210, 130),
 			BackColor = Color.Transparent,
 			Location = new Point(20, 12),
@@ -30,14 +41,14 @@ internal class ToastForm : Form
 		Label value2 = new Label
 		{
 			Text = body,
-			Font = new Font("Segoe UI", 9.5f),
+			Font = fBody,
 			ForeColor = Color.FromArgb(220, 220, 235),
 			BackColor = Color.Transparent,
 			Location = new Point(22, 46),
 			Size = new Size(360, 44)
 		};
 		base.Controls.Add(value2);
-		RoundedBtn roundedBtn = new RoundedBtn("▶   เข\u0e49าเกมเลย", Color.FromArgb(90, 210, 130), Color.FromArgb(120, 230, 160), Color.FromArgb(15, 25, 18), 10, new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold))
+		RoundedBtn roundedBtn = new RoundedBtn("▶   เข\u0e49าเกมเลย", Color.FromArgb(90, 210, 130), Color.FromArgb(120, 230, 160), Color.FromArgb(15, 25, 18), 10, fBtnBold)
 		{
 			Location = new Point(20, 92),
 			Size = new Size(160, 34)
@@ -52,7 +63,7 @@ internal class ToastForm : Form
 		};
 		roundedBtn.Click += value3;
 		base.Controls.Add(roundedBtn);
-		RoundedBtn roundedBtn2 = new RoundedBtn("ป\u0e34ด", Color.FromArgb(36, 36, 52), Color.FromArgb(48, 48, 70), Color.FromArgb(160, 160, 180), 10, new Font("Segoe UI", 9.5f));
+		RoundedBtn roundedBtn2 = new RoundedBtn("ป\u0e34ด", Color.FromArgb(36, 36, 52), Color.FromArgb(48, 48, 70), Color.FromArgb(160, 160, 180), 10, fBtnNorm);
 		roundedBtn2.Location = new Point(192, 92);
 		roundedBtn2.Size = new Size(70, 34);
 		roundedBtn2.Click += delegate
@@ -62,11 +73,24 @@ internal class ToastForm : Form
 		base.Controls.Add(roundedBtn2);
 		DpiHelper.ScaleControlTree(this);
 		base.Size = DpiHelper.Sz(400, 136);
+		activeToasts.Add(this);
+		int offsetY = 0;
+		int gap = DpiHelper.S(10);
+		for (int i = 0; i < activeToasts.Count - 1; i++)
+		{
+			if (!activeToasts[i].IsDisposed)
+			{
+				offsetY += activeToasts[i].Height + gap;
+			}
+		}
 		Screen scr = Screen.FromPoint(Cursor.Position);
 		Rectangle workingArea = (scr != null) ? scr.WorkingArea : Screen.PrimaryScreen.WorkingArea;
 		int margin = DpiHelper.S(24);
-		base.Location = new Point(workingArea.Right - base.Width - margin, workingArea.Bottom - base.Height - margin);
-		base.Region = new Region(RoundRectP(new Rectangle(0, 0, base.Width, base.Height), DpiHelper.S(14)));
+		base.Location = new Point(workingArea.Right - base.Width - margin, workingArea.Bottom - base.Height - margin - offsetY);
+		using (GraphicsPath gp = RoundRectP(new Rectangle(0, 0, base.Width, base.Height), DpiHelper.S(14)))
+		{
+			base.Region = new Region(gp);
+		}
 		autoClose = new Timer();
 		autoClose.Interval = 9000;
 		autoClose.Tick += delegate
@@ -76,19 +100,24 @@ internal class ToastForm : Form
 		autoClose.Start();
 	}
 
+	protected override void OnClosed(EventArgs e)
+	{
+		base.OnClosed(e);
+		activeToasts.Remove(this);
+	}
+
 	protected override void OnShown(EventArgs e)
 	{
 		base.OnShown(e);
 		base.Opacity = 0.0;
-		Timer ft = new Timer();
-		ft.Interval = 15;
+		fadeTimer = new Timer();
+		fadeTimer.Interval = 15;
 		Stopwatch swt = Stopwatch.StartNew();
-		ft.Tick += delegate
+		fadeTimer.Tick += delegate
 		{
-			if (base.IsDisposed)
+			if (base.IsDisposed || fadeTimer == null)
 			{
-				ft.Stop();
-				ft.Dispose();
+				if (fadeTimer != null) { fadeTimer.Stop(); fadeTimer.Dispose(); fadeTimer = null; }
 			}
 			else
 			{
@@ -96,12 +125,13 @@ internal class ToastForm : Form
 				base.Opacity = num;
 				if (num >= 1f)
 				{
-					ft.Stop();
-					ft.Dispose();
+					fadeTimer.Stop();
+					fadeTimer.Dispose();
+					fadeTimer = null;
 				}
 			}
 		};
-		ft.Start();
+		fadeTimer.Start();
 	}
 
 	private static GraphicsPath RoundRectP(Rectangle r, int rad)
@@ -123,9 +153,15 @@ internal class ToastForm : Form
 
 	protected override void Dispose(bool disposing)
 	{
-		if (disposing && autoClose != null)
+		if (disposing)
 		{
-			autoClose.Dispose();
+			if (autoClose != null) { autoClose.Stop(); autoClose.Dispose(); autoClose = null; }
+			if (fadeTimer != null) { fadeTimer.Stop(); fadeTimer.Dispose(); fadeTimer = null; }
+			if (fTitle != null) { fTitle.Dispose(); fTitle = null; }
+			if (fBody != null) { fBody.Dispose(); fBody = null; }
+			if (fBtnBold != null) { fBtnBold.Dispose(); fBtnBold = null; }
+			if (fBtnNorm != null) { fBtnNorm.Dispose(); fBtnNorm = null; }
+			if (base.Region != null) { base.Region.Dispose(); base.Region = null; }
 		}
 		base.Dispose(disposing);
 	}

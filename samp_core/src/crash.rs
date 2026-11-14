@@ -42,6 +42,20 @@ pub struct TelemetryData {
     pub virtual_mem_mb: u64,
     #[serde(default)]
     pub timestamp: String,
+    #[serde(default)]
+    pub system_free_ram_mb: u64,
+    #[serde(default)]
+    pub active_mic: String,
+    #[serde(default)]
+    pub net_shield_active: bool,
+    #[serde(default)]
+    pub audio_shield_active: bool,
+    #[serde(default)]
+    pub gpu_shield_active: bool,
+    #[serde(default)]
+    pub borderless_active: bool,
+    #[serde(default)]
+    pub tuned_udp_sockets: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]

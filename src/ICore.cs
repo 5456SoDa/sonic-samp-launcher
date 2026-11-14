@@ -14,6 +14,7 @@ internal class ScanUpdateItem
 	public string Mode = "";
 	public string Language = "";
 	public bool IsOpenMp;
+	public bool Locked;
 }
 
 internal class ScanPollResult
@@ -41,6 +42,7 @@ internal class HealthCheckReport
 	public List<string> ReadonlyFiles = new List<string>();
 	public bool InProgramFiles;
 	public bool MissingDx9;
+	public bool NeedsLaa;
 	public int FixableCount;
 }
 
@@ -76,6 +78,7 @@ internal class AssetScanReport
 	public int ErrorCount;
 	public int WarnCount;
 	public int DuplicateCount;
+	public bool TruncatedIssues;
 	public List<AssetIssue> Issues = new List<AssetIssue>();
 }
 
@@ -119,6 +122,78 @@ internal class TelemetryData
 	public long PrivateBytesMb;
 	public long VirtualMemMb;
 	public string Timestamp = "";
+	public long SystemFreeRamMb;
+	public string ActiveMic = "";
+	public bool NetShieldActive;
+	public bool AudioShieldActive;
+	public bool GpuShieldActive;
+	public bool BorderlessActive;
+	public int TunedUdpSockets;
+}
+
+internal class MicDeviceInfo
+{
+	public int Id;
+	public string Name = "";
+	public bool IsVirtual;
+	public bool Recommended;
+}
+
+internal class PrewarmReport
+{
+	public string Host = "";
+	public string ResolvedIp = "";
+	public int GamePort;
+	public int VoicePort;
+	public int DnsMs;
+	public int GamePingMs = -1;
+	public bool VoiceRouteWarmed;
+	public string Summary = "";
+}
+
+internal class ShieldDiagnostics
+{
+	public bool Enable = true;
+	public bool Borderless;
+	public bool CatchCrash = true;
+	public bool HighPrecisionTimer = true;
+	public bool Telemetry = true;
+	public bool NetShield = true;
+	public bool AudioShield = true;
+	public string PreferredMic = "";
+	public bool GpuBoost = true;
+	public bool ForceImmediatePresent = true;
+	public string ResourceMode = "auto";
+	public string CpuAffinity = "auto";
+
+	public bool FirewallChecked;
+	public bool FirewallGtaAllowed;
+	public bool FirewallGtaBlocked;
+	public string FirewallSummary = "";
+	public bool AltTabNoPause;
+	public string AltTabNote = "";
+	public string LastVoiceServer = "";
+	public int LastVoicePort;
+
+	public List<MicDeviceInfo> Mics = new List<MicDeviceInfo>();
+	public bool MicConsentAllowed = true;
+	public string AudioRecommendation = "";
+	public bool SvlogPauseDisconnect;
+	public List<string> SvlogErrors = new List<string>();
+
+	public bool IsHybridGpu;
+	public string IgpuName = "";
+	public string DgpuName = "";
+	public string WindowsGpuPref = "";
+	public string GpuSummary = "";
+
+	public long TotalRamMb;
+	public long AvailRamMb;
+	public int MemoryLoadPct;
+	public int LogicalCores;
+	public int RecommendedStreamMb;
+	public int RecommendedLimitMb;
+	public long LauncherWorkingSetMb;
 }
 
 internal class GuardRuntimeStatus
@@ -217,7 +292,156 @@ internal interface ICore
 
 	void StopPingSpark();
 
+	ShieldDiagnostics GetShieldDiagnostics(string gameDir, string host, int port);
+
+	string SaveShieldIni(string gameDir, Dictionary<string, string> updates);
+
+	PrewarmReport PrewarmServer(string host, int port);
+
+	long TrimLauncherMemory();
+
 	void CloseDb();
+
+	LauncherSettingsDto LoadSettings(string cfgPath);
+
+	string SaveSettings(string cfgPath, LauncherSettingsDto cfg);
+
+	string SetAltTabNoPause(string gameDir, bool enable);
+
+	bool ResetGtaSaSet();
+
+	List<SavedServerDto> ListFavorites();
+
+	void UpsertFavorite(string ip, string port, string name);
+
+	bool RemoveFavorite(string ip, string port);
+
+	List<SavedServerDto> ListHistory(int limit);
+
+	void RecordHistory(string ip, string port, string name);
+
+	bool RemoveHistory(string ip, string port);
+
+	void RenameSavedServer(string ip, string port, string name);
+
+	WatchdogStatusDto PollWatchdog();
+
+	void StopWatchdog();
+
+	bool IsGameRunning();
+
+	ServerDetailsDto QueryServerDetails(string host, int port);
+
+	bool StartSlotWatch(string host, int port);
+
+	void StopSlotWatch();
+
+	SlotWatchStatusDto PollSlotWatch();
+
+	ChatlogResultDto ReadChatlog(string path, int maxBytes, int maxLines, string query);
+
+	GalleryScanResultDto ScanGallery(string dir, int maxItems);
+}
+
+internal class CoreLoadException : Exception
+{
+	public CoreLoadException(string message, Exception inner)
+		: base(message, inner)
+	{
+	}
+}
+
+internal class LauncherSettingsDto
+{
+	public string Nick = "";
+	public string Accent = "138,43,226";
+	public string GamePath = "";
+	public bool AutoConnect;
+	public bool CloseAfterLaunch;
+	public string LastIp = "127.0.0.1";
+	public string LastPort = "7777";
+	public string RconIp = "";
+	public string RconPort = "";
+	public string RconPass = "";
+	public int SortCol;
+	public bool SortDesc;
+	public string SkyGfxPreset = "ps2";
+	public int FpsLimit;
+	public bool AutoJoinSlot;
+	public bool SoundFx = true;
+	public bool DiscordRpc = true;
+	public string DiscordAppId = "";
+	public bool NoPauseAltTab;
+	public List<string> NickProfiles = new List<string>();
+}
+
+internal class SavedServerDto
+{
+	public string Ip = "";
+	public string Port = "";
+	public string Name = "";
+	public long LastJoinedAt;
+	public long JoinCount;
+}
+
+internal class ServerDetailsDto
+{
+	public QueryResult Info = new QueryResult();
+	public List<string[]> Players;
+	public List<string[]> Rules;
+}
+
+internal class SlotWatchStatusDto
+{
+	public bool Watching;
+	public bool FoundSlot;
+	public string Ip = "";
+	public int Port;
+	public string Name = "";
+	public int Players;
+	public int Max;
+	public int Ping = -1;
+}
+
+internal class WatchdogStatusDto
+{
+	public bool Active;
+	public bool Running;
+	public bool Exited;
+	public bool Crashed;
+	public uint Pid;
+	public string ServerKey = "";
+	public long SessionSeconds;
+	public long TotalPlaytime;
+	public uint ExitCode;
+	public CrashInfo Crash;
+}
+
+internal class ChatlogResultDto
+{
+	public bool Exists;
+	public string Path = "";
+	public long FileSizeBytes;
+	public int TotalLines;
+	public int MatchedCount;
+	public bool Truncated;
+	public List<string> Lines = new List<string>();
+}
+
+internal class GalleryItemDto
+{
+	public string Path = "";
+	public string Name = "";
+	public long SizeBytes;
+	public long ModifiedEpoch;
+}
+
+internal class GalleryScanResultDto
+{
+	public string Directory = "";
+	public bool Exists;
+	public int TotalFound;
+	public List<GalleryItemDto> Items = new List<GalleryItemDto>();
 }
 
 internal static class CoreFactory
@@ -231,10 +455,15 @@ internal static class CoreFactory
 			{
 				return rc;
 			}
+			throw new CoreLoadException("ไม่พบหรือโหลด samp_core.dll (x86) ไม่สำเร็จ กรุณาตรวจสอบไฟล์ข้างตัว Launcher", null);
 		}
-		catch
+		catch (CoreLoadException)
 		{
+			throw;
 		}
-		return new ManagedCore();
+		catch (Exception ex)
+		{
+			throw new CoreLoadException("ไม่สามารถเริ่มต้น Rust Engine (samp_core.dll): " + ex.Message, ex);
+		}
 	}
 }

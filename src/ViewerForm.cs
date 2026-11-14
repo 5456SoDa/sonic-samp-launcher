@@ -11,6 +11,9 @@ internal class ViewerForm : Form
 	private PictureBox pb;
 	private Label lblInfo;
 	private Panel topBar;
+	private Font fTitle;
+	private Font fBtn;
+	private Timer copyMsgTimer;
 
 	public ViewerForm(string path) : this(path, null)
 	{
@@ -21,10 +24,13 @@ internal class ViewerForm : Form
 		base.Text = "แกลเลอรีภาพหน้าจอ (SA-MP Screenshots)";
 		base.BackColor = Color.FromArgb(10, 10, 16);
 		base.StartPosition = FormStartPosition.CenterParent;
-		base.Size = new Size(1000, 680);
+		base.Size = DpiHelper.Sz(1000, 680);
 		base.ShowInTaskbar = false;
 		base.KeyPreview = true;
 		base.DoubleBuffered = true;
+
+		fTitle = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold);
+		fBtn = new Font("Segoe UI", 9f);
 
 		if (allPaths != null && allPaths.Count > 0)
 		{
@@ -42,51 +48,52 @@ internal class ViewerForm : Form
 		topBar = new Panel
 		{
 			Dock = DockStyle.Top,
-			Height = 44,
+			Height = DpiHelper.S(44),
 			BackColor = Color.FromArgb(16, 22, 34),
-			Padding = new Padding(12, 6, 12, 6)
+			Padding = new Padding(DpiHelper.S(12), DpiHelper.S(6), DpiHelper.S(12), DpiHelper.S(6))
 		};
 
 		lblInfo = new Label
 		{
-			Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold),
+			Font = fTitle,
 			ForeColor = Color.FromArgb(51, 204, 255),
 			AutoSize = true,
-			Location = new Point(14, 11)
+			Location = DpiHelper.Pt(14, 11)
 		};
 		topBar.Controls.Add(lblInfo);
 
-		RoundedBtn btnPrev = new RoundedBtn("◀ ก่อนหน้า", Color.FromArgb(28, 42, 66), Color.FromArgb(40, 60, 95), Color.White, 6, new Font("Segoe UI", 9f))
+		int topW = base.ClientSize.Width;
+		RoundedBtn btnPrev = new RoundedBtn("◀ ก่อนหน้า", Color.FromArgb(28, 42, 66), Color.FromArgb(40, 60, 95), Color.White, DpiHelper.S(6), fBtn)
 		{
-			Size = new Size(90, 30),
-			Location = new Point(base.Width - 430, 7),
+			Size = DpiHelper.Sz(90, 30),
+			Location = new Point(topW - DpiHelper.S(382), DpiHelper.S(7)),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		btnPrev.Click += delegate { ShowPrev(); };
 		topBar.Controls.Add(btnPrev);
 
-		RoundedBtn btnNext = new RoundedBtn("ถัดไป ▶", Color.FromArgb(28, 42, 66), Color.FromArgb(40, 60, 95), Color.White, 6, new Font("Segoe UI", 9f))
+		RoundedBtn btnNext = new RoundedBtn("ถัดไป ▶", Color.FromArgb(28, 42, 66), Color.FromArgb(40, 60, 95), Color.White, DpiHelper.S(6), fBtn)
 		{
-			Size = new Size(80, 30),
-			Location = new Point(base.Width - 334, 7),
+			Size = DpiHelper.Sz(80, 30),
+			Location = new Point(topW - DpiHelper.S(284), DpiHelper.S(7)),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		btnNext.Click += delegate { ShowNext(); };
 		topBar.Controls.Add(btnNext);
 
-		RoundedBtn btnCopy = new RoundedBtn("📋 คัดลอก", Color.FromArgb(28, 42, 66), Color.FromArgb(40, 60, 95), Color.FromArgb(255, 235, 0), 6, new Font("Segoe UI", 9f))
+		RoundedBtn btnCopy = new RoundedBtn("📋 คัดลอก", Color.FromArgb(28, 42, 66), Color.FromArgb(40, 60, 95), Color.FromArgb(255, 235, 0), DpiHelper.S(6), fBtn)
 		{
-			Size = new Size(84, 30),
-			Location = new Point(base.Width - 248, 7),
+			Size = DpiHelper.Sz(84, 30),
+			Location = new Point(topW - DpiHelper.S(196), DpiHelper.S(7)),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		btnCopy.Click += delegate { CopyCurrentImage(); };
 		topBar.Controls.Add(btnCopy);
 
-		RoundedBtn btnClose = new RoundedBtn("✕ ปิด (Esc)", Color.FromArgb(50, 20, 26), Color.FromArgb(80, 25, 35), Color.FromArgb(255, 120, 120), 6, new Font("Segoe UI", 9f))
+		RoundedBtn btnClose = new RoundedBtn("✕ ปิด (Esc)", Color.FromArgb(50, 20, 26), Color.FromArgb(80, 25, 35), Color.FromArgb(255, 120, 120), DpiHelper.S(6), fBtn)
 		{
-			Size = new Size(88, 30),
-			Location = new Point(base.Width - 158, 7),
+			Size = DpiHelper.Sz(88, 30),
+			Location = new Point(topW - DpiHelper.S(104), DpiHelper.S(7)),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		btnClose.Click += delegate { Close(); };
@@ -152,7 +159,10 @@ internal class ViewerForm : Form
 			byte[] fileBytes = File.ReadAllBytes(curPath);
 			using (MemoryStream ms = new MemoryStream(fileBytes))
 			{
-				pb.Image = new Bitmap(Image.FromStream(ms));
+				using (Image tmp = Image.FromStream(ms))
+				{
+					pb.Image = new Bitmap(tmp);
+				}
 			}
 
 			string fileName = Path.GetFileName(curPath);
@@ -192,18 +202,26 @@ internal class ViewerForm : Form
 				lblInfo.Text = "✅ คัดลอกรูปภาพลง Clipboard เรียบร้อยแล้ว!";
 				lblInfo.ForeColor = Color.FromArgb(102, 255, 0);
 
-				Timer t = new Timer { Interval = 2000 };
-				t.Tick += delegate
+				if (copyMsgTimer != null)
 				{
-					t.Stop();
-					t.Dispose();
+					copyMsgTimer.Stop();
+					copyMsgTimer.Dispose();
+					copyMsgTimer = null;
+				}
+				copyMsgTimer = new Timer { Interval = 2000 };
+				Timer captured = copyMsgTimer;
+				captured.Tick += delegate
+				{
+					captured.Stop();
+					captured.Dispose();
+					if (copyMsgTimer == captured) copyMsgTimer = null;
 					if (!base.IsDisposed)
 					{
 						lblInfo.Text = prevText;
 						lblInfo.ForeColor = Color.FromArgb(51, 204, 255);
 					}
 				};
-				t.Start();
+				captured.Start();
 			}
 			catch { }
 		}
@@ -231,5 +249,22 @@ internal class ViewerForm : Form
 			e.SuppressKeyPress = true;
 			CopyCurrentImage();
 		}
+	}
+
+	protected override void Dispose(bool disposing)
+	{
+		if (disposing)
+		{
+			if (copyMsgTimer != null)
+			{
+				copyMsgTimer.Stop();
+				copyMsgTimer.Dispose();
+				copyMsgTimer = null;
+			}
+			ClearCurrentImage();
+			if (fTitle != null) { fTitle.Dispose(); fTitle = null; }
+			if (fBtn != null) { fBtn.Dispose(); fBtn = null; }
+		}
+		base.Dispose(disposing);
 	}
 }

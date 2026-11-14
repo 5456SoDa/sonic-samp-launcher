@@ -238,8 +238,23 @@ internal class MiniToast : Form
 	{
 		if (disposing)
 		{
-			if (animTimer != null) animTimer.Dispose();
-			if (msgFont != null) msgFont.Dispose();
+			if (animTimer != null)
+			{
+				animTimer.Stop();
+				animTimer.Dispose();
+				animTimer = null;
+			}
+			if (msgFont != null)
+			{
+				msgFont.Dispose();
+				msgFont = null;
+			}
+			if (base.Region != null)
+			{
+				Region r = base.Region;
+				base.Region = null;
+				try { r.Dispose(); } catch { }
+			}
 		}
 		base.Dispose(disposing);
 	}

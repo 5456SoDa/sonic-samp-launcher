@@ -440,19 +440,19 @@ pub fn apply_dwm(hwnd_val: usize) -> bool {
         }
 
         let dark: i32 = 1;
-        let hr_dark = dwm_set_attr(
+        let mut dark_ok = dwm_set_attr(
             hwnd,
             DWMWA_USE_IMMERSIVE_DARK_MODE,
             (&dark as *const i32).cast(),
             std::mem::size_of::<i32>() as u32,
-        );
-        if hr_dark < 0 {
-            let _ = dwm_set_attr(
+        ) >= 0;
+        if !dark_ok {
+            dark_ok = dwm_set_attr(
                 hwnd,
                 DWMWA_USE_IMMERSIVE_DARK_MODE_OLD,
                 (&dark as *const i32).cast(),
                 std::mem::size_of::<i32>() as u32,
-            );
+            ) >= 0;
         }
 
         let nc_policy = DWMNCRP_ENABLED;
@@ -489,11 +489,13 @@ pub fn apply_dwm(hwnd_val: usize) -> bool {
             let _ = extend(hwnd, &margins);
         }
 
-        if let Some(subclass) = w32.set_window_subclass {
-            let _ = subclass(hwnd, frame_subclass_proc, FRAME_SUBCLASS_ID, 0);
-        }
+        let sub_ok = if let Some(subclass) = w32.set_window_subclass {
+            subclass(hwnd, frame_subclass_proc, FRAME_SUBCLASS_ID, 0) != 0
+        } else {
+            false
+        };
 
-        if let Some(set_pos) = w32.set_window_pos {
+        let pos_ok = if let Some(set_pos) = w32.set_window_pos {
             set_pos(
                 hwnd,
                 std::ptr::null_mut(),
@@ -502,9 +504,11 @@ pub fn apply_dwm(hwnd_val: usize) -> bool {
                 0,
                 0,
                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
-        true
+            ) != 0
+        } else {
+            false
+        };
+        dark_ok || (sub_ok && pos_ok)
     }
 }
 
@@ -631,6 +635,7 @@ unsafe extern "system" fn listview_subclass_proc(
                     let count = send_msg(hwnd, LVM_GETITEMCOUNT, 0, 0) as i32;
                     let mut empty_top = hdr_h;
                     let mut max_right = 0i32;
+                    let mut ready_to_paint = count == 0;
                     if count > 0 {
                         // LVIR_BOUNDS == 0 -> left == 0 on entry
                         let mut last_rc = RECT {
@@ -648,12 +653,16 @@ unsafe extern "system" fn listview_subclass_proc(
                         {
                             empty_top = last_rc.bottom.max(hdr_h);
                             max_right = last_rc.right;
+                            ready_to_paint = true;
                         }
                     }
 
-                    let need_bottom = empty_top < client_rc.bottom;
-                    let need_right =
-                        count > 0 && max_right > 0 && max_right < client_rc.right && empty_top > hdr_h;
+                    let need_bottom = ready_to_paint && empty_top < client_rc.bottom;
+                    let need_right = ready_to_paint
+                        && count > 0
+                        && max_right > 0
+                        && max_right < client_rc.right
+                        && empty_top > hdr_h;
                     if need_bottom || need_right {
                         let hdc = get_dc(hwnd);
                         if !hdc.is_null() {
@@ -736,9 +745,11 @@ pub fn style_listview(hwnd_val: usize, header_bg_rgb: u32, accent_rgb: u32) -> b
             let _ = set_theme(lv_hwnd, DARK_EXPLORER.as_ptr(), std::ptr::null());
         }
 
-        if let Some(subclass) = w32.set_window_subclass {
-            let _ = subclass(lv_hwnd, listview_subclass_proc, LISTVIEW_SUBCLASS_ID, 0);
-        }
+        let lv_sub_ok = if let Some(subclass) = w32.set_window_subclass {
+            subclass(lv_hwnd, listview_subclass_proc, LISTVIEW_SUBCLASS_ID, 0) != 0
+        } else {
+            false
+        };
 
         if let Some(send_msg) = w32.send_message {
             let hdr_raw = send_msg(lv_hwnd, LVM_GETHEADER, 0, 0);
@@ -747,13 +758,15 @@ pub fn style_listview(hwnd_val: usize, header_bg_rgb: u32, accent_rgb: u32) -> b
                 if let Ok(mut m) = header_map().lock() {
                     m.insert(hdr_raw as usize, (hdr_bg_cr, accent_cr));
                 }
-                if let Some(subclass) = w32.set_window_subclass {
-                    let _ = subclass(hdr_hwnd, header_subclass_proc, HEADER_SUBCLASS_ID, 0);
-                }
+                let hdr_sub_ok = if let Some(subclass) = w32.set_window_subclass {
+                    subclass(hdr_hwnd, header_subclass_proc, HEADER_SUBCLASS_ID, 0) != 0
+                } else {
+                    false
+                };
                 if let Some(inv) = w32.invalidate_rect {
                     inv(hdr_hwnd, std::ptr::null(), 1);
                 }
-                return true;
+                return lv_sub_ok && hdr_sub_ok;
             }
         }
     }

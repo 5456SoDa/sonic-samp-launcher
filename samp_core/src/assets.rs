@@ -1,7 +1,9 @@
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{Cursor, Read, Seek, SeekFrom};
+#[cfg(test)]
+use std::io::Cursor;
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,6 +26,7 @@ pub struct AssetScanReport {
     pub error_count: usize,
     pub warn_count: usize,
     pub duplicate_count: usize,
+    pub truncated_issues: bool,
     pub issues: Vec<AssetIssue>,
 }
 
@@ -71,15 +74,17 @@ fn validate_dff_reader<R: Read>(r: &mut R, total_len: u64) -> Result<(), String>
     Ok(())
 }
 
+#[cfg(test)]
 pub fn validate_dff_bytes(data: &[u8]) -> Result<(), String> {
     let mut cur = Cursor::new(data);
     validate_dff_reader(&mut cur, data.len() as u64)
 }
 
 pub fn validate_dff_file(path: &Path) -> Result<(), String> {
-    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    validate_dff_reader(&mut f, len)
+    let mut reader = BufReader::new(f);
+    validate_dff_reader(&mut reader, len)
 }
 
 pub struct TxdInspectResult {
@@ -179,36 +184,40 @@ fn validate_txd_reader<R: Read + Seek>(r: &mut R, total_len: u64) -> Result<TxdI
     })
 }
 
+#[cfg(test)]
 pub fn validate_txd_bytes(data: &[u8]) -> Result<TxdInspectResult, String> {
     let mut cur = Cursor::new(data);
     validate_txd_reader(&mut cur, data.len() as u64)
 }
 
 pub fn validate_txd_file(path: &Path) -> Result<TxdInspectResult, String> {
-    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    validate_txd_reader(&mut f, len)
+    let mut reader = BufReader::new(f);
+    validate_txd_reader(&mut reader, len)
 }
 
 /// Validates GTA San Andreas .col collision archives (COLL / COL2 / COL3 / COL4).
 pub fn validate_col_file(path: &Path) -> Result<(), String> {
-    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
     let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if file_len < 12 {
         return Err("ไฟล์ COL เล็กเกินไป (< 12 bytes)".into());
     }
+    let mut reader = BufReader::new(f);
     let mut hdr = [0u8; 8];
-    f.read_exact(&mut hdr)
+    reader
+        .read_exact(&mut hdr)
         .map_err(|_| "อ่าน Header COL ไม่สำเร็จ".to_string())?;
     let magic = &hdr[0..4];
     if !matches!(magic, b"COLL" | b"COL2" | b"COL3" | b"COL4") {
         return Err("Header ไม่ใช่ไฟล์ Collision ของ GTA (COLL/COL2/COL3/COL4)".into());
     }
     let size = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
-    if size < 4 || size + 8 > file_len {
+    if size < 4 || size.checked_add(8).map_or(true, |end| end > file_len) {
         return Err(format!(
             "ไฟล์ COL ไม่สมบูรณ์/ถูกตัดขาด (ต้องการ {} bytes แต่ไฟล์มี {} bytes)",
-            size + 8,
+            size.saturating_add(8),
             file_len
         ));
     }
@@ -217,13 +226,15 @@ pub fn validate_col_file(path: &Path) -> Result<(), String> {
 
 /// Validates GTA animation packages (.ifp: ANPK / ANP3).
 pub fn validate_ifp_file(path: &Path) -> Result<(), String> {
-    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
     let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if file_len < 16 {
         return Err("ไฟล์ IFP เล็กเกินไป (< 16 bytes)".into());
     }
+    let mut reader = BufReader::new(f);
     let mut hdr = [0u8; 8];
-    f.read_exact(&mut hdr)
+    reader
+        .read_exact(&mut hdr)
         .map_err(|_| "อ่าน Header IFP ไม่สำเร็จ".to_string())?;
     let magic = &hdr[0..4];
     if !matches!(magic, b"ANPK" | b"ANP3") {
@@ -233,17 +244,26 @@ pub fn validate_ifp_file(path: &Path) -> Result<(), String> {
     if size == 0 {
         return Err("ขนาดข้อมูลภายใน IFP เป็น 0 (ไฟล์เสียหาย)".into());
     }
+    if size.checked_add(8).map_or(true, |end| end > file_len) {
+        return Err(format!(
+            "ไฟล์ IFP ไม่สมบูรณ์/ถูกตัดขาด (ต้องการ {} bytes แต่ไฟล์มี {} bytes)",
+            size.saturating_add(8),
+            file_len
+        ));
+    }
     Ok(())
 }
 
 pub fn validate_img_file(path: &Path) -> Result<usize, String> {
-    let mut f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
+    let f = File::open(path).map_err(|e| format!("เปิดไฟล์ไม่ได้: {}", e))?;
     let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if file_len < 8 {
         return Err("ไฟล์ IMG เล็กเกินไป (< 8 bytes)".into());
     }
+    let mut reader = BufReader::new(f);
     let mut hdr = [0u8; 8];
-    f.read_exact(&mut hdr)
+    reader
+        .read_exact(&mut hdr)
         .map_err(|_| "อ่าน Header IMG ไม่สำเร็จ".to_string())?;
     if &hdr[0..4] != b"VER2" {
         return Err("ไม่ใช่ IMG VER2 (GTA San Andreas standard)".into());
@@ -257,13 +277,14 @@ pub fn validate_img_file(path: &Path) -> Result<usize, String> {
         return Err("ตารางสารบัญ IMG ถูกตัดขาดไม่สมบูรณ์".into());
     }
     let mut dir = vec![0u8; dir_bytes as usize];
-    f.read_exact(&mut dir)
+    reader
+        .read_exact(&mut dir)
         .map_err(|_| "อ่านสารบัญ IMG ไม่สำเร็จ".to_string())?;
     for i in 0..entry_count {
         let e = &dir[i * 32..(i + 1) * 32];
         let off_sec = u32::from_le_bytes([e[0], e[1], e[2], e[3]]) as u64;
         let sz_sec = u16::from_le_bytes([e[4], e[5]]) as u64;
-        let end_byte = (off_sec + sz_sec) * 2048;
+        let end_byte = off_sec.saturating_add(sz_sec).saturating_mul(2048);
         if end_byte > file_len {
             let name = cstr_trim(&e[8..32]);
             return Err(format!(
@@ -290,6 +311,7 @@ fn collect_mod_files(
     dir: &Path,
     depth: usize,
     in_modloader: bool,
+    ignore_top_subfolders: Option<&HashSet<String>>,
     out: &mut Vec<(std::path::PathBuf, bool)>,
 ) {
     if depth == 0 || !dir.is_dir() {
@@ -309,17 +331,40 @@ fn collect_mod_files(
             continue;
         }
         if p.is_dir() {
-            collect_mod_files(root, &p, depth - 1, in_modloader, out);
+            if let Some(ignored) = ignore_top_subfolders {
+                if ignored.contains(&name.to_ascii_lowercase()) {
+                    continue;
+                }
+            }
+            collect_mod_files(root, &p, depth - 1, in_modloader, None, out);
         } else {
             out.push((p, in_modloader));
         }
     }
 }
 
+fn push_issue(report: &mut AssetScanReport, issue: AssetIssue) {
+    if report.issues.len() < 150 {
+        report.issues.push(issue);
+    } else {
+        report.truncated_issues = true;
+    }
+}
+
 pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
+    let (ml_ignore_all, ml_ignored) = crate::modloader_cfg::ignored_mod_folders(game_dir);
     let mut files = Vec::new();
-    collect_mod_files(game_dir, &game_dir.join("modloader"), 6, true, &mut files);
-    collect_mod_files(game_dir, &game_dir.join("SAMP"), 2, false, &mut files);
+    if !ml_ignore_all {
+        collect_mod_files(
+            game_dir,
+            &game_dir.join("modloader"),
+            6,
+            true,
+            Some(&ml_ignored),
+            &mut files,
+        );
+    }
+    collect_mod_files(game_dir, &game_dir.join("SAMP"), 2, false, None, &mut files);
 
     let mut report = AssetScanReport {
         scanned_files: 0,
@@ -332,6 +377,7 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
         error_count: 0,
         warn_count: 0,
         duplicate_count: 0,
+        truncated_issues: false,
         issues: Vec::new(),
     };
 
@@ -364,14 +410,15 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
                 report.dff_count += 1;
                 if let Err(msg) = validate_dff_file(&path) {
                     report.error_count += 1;
-                    if report.issues.len() < 150 {
-                        report.issues.push(AssetIssue {
+                    push_issue(
+                        &mut report,
+                        AssetIssue {
                             severity: "error".into(),
                             kind: "dff".into(),
                             rel_path: rel,
                             message: msg,
-                        });
-                    }
+                        },
+                    );
                 }
             }
             "txd" => {
@@ -382,26 +429,28 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
                         report.texture_count += res.texture_count;
                         for w in res.warnings {
                             report.warn_count += 1;
-                            if report.issues.len() < 150 {
-                                report.issues.push(AssetIssue {
+                            push_issue(
+                                &mut report,
+                                AssetIssue {
                                     severity: "warn".into(),
                                     kind: "txd".into(),
                                     rel_path: rel.clone(),
                                     message: w,
-                                });
-                            }
+                                },
+                            );
                         }
                     }
                     Err(msg) => {
                         report.error_count += 1;
-                        if report.issues.len() < 150 {
-                            report.issues.push(AssetIssue {
+                        push_issue(
+                            &mut report,
+                            AssetIssue {
                                 severity: "error".into(),
                                 kind: "txd".into(),
                                 rel_path: rel,
                                 message: msg,
-                            });
-                        }
+                            },
+                        );
                     }
                 }
             }
@@ -410,14 +459,15 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
                 report.img_count += 1;
                 if let Err(msg) = validate_img_file(&path) {
                     report.error_count += 1;
-                    if report.issues.len() < 150 {
-                        report.issues.push(AssetIssue {
+                    push_issue(
+                        &mut report,
+                        AssetIssue {
                             severity: "error".into(),
                             kind: "img".into(),
                             rel_path: rel,
                             message: msg,
-                        });
-                    }
+                        },
+                    );
                 }
             }
             "col" => {
@@ -425,14 +475,15 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
                 report.col_count += 1;
                 if let Err(msg) = validate_col_file(&path) {
                     report.error_count += 1;
-                    if report.issues.len() < 150 {
-                        report.issues.push(AssetIssue {
+                    push_issue(
+                        &mut report,
+                        AssetIssue {
                             severity: "error".into(),
                             kind: "col".into(),
                             rel_path: rel,
                             message: msg,
-                        });
-                    }
+                        },
+                    );
                 }
             }
             "ifp" => {
@@ -440,14 +491,15 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
                 report.ifp_count += 1;
                 if let Err(msg) = validate_ifp_file(&path) {
                     report.error_count += 1;
-                    if report.issues.len() < 150 {
-                        report.issues.push(AssetIssue {
+                    push_issue(
+                        &mut report,
+                        AssetIssue {
                             severity: "error".into(),
                             kind: "ifp".into(),
                             rel_path: rel,
                             message: msg,
-                        });
-                    }
+                        },
+                    );
                 }
             }
             _ => {}
@@ -464,14 +516,19 @@ pub fn scan_game_assets(game_dir: &Path) -> AssetScanReport {
         if let Some(paths) = modloader_names.get(&k) {
             report.duplicate_count += 1;
             report.warn_count += 1;
-            if report.issues.len() < 150 {
-                report.issues.push(AssetIssue {
+            push_issue(
+                &mut report,
+                AssetIssue {
                     severity: "warn".into(),
                     kind: "dup".into(),
                     rel_path: k,
-                    message: format!("ไฟล์ชื่อซ้ำทับกัน {} จุด (ปรับ Priority ใน ModLoader ได้): {}", paths.len(), paths.join(" <-> ")),
-                });
-            }
+                    message: format!(
+                        "ไฟล์ชื่อซ้ำทับกัน {} จุด (ปรับ Priority ใน ModLoader ได้): {}",
+                        paths.len(),
+                        paths.join(" <-> ")
+                    ),
+                },
+            );
         }
     }
 
@@ -587,6 +644,41 @@ mod tests {
         assert_eq!(rep.duplicate_count, 1);
         assert_eq!(rep.error_count, 2);
         assert_eq!(rep.warn_count, 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_ifp_truncation_and_ignore_mods_honored() {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("samp_assets_ign_{}", nanos));
+        fs::create_dir_all(dir.join("modloader").join("EnabledPack")).unwrap();
+        fs::create_dir_all(dir.join("modloader").join("DisabledPack")).unwrap();
+        fs::write(
+            dir.join("modloader").join("modloader.ini"),
+            "[Folder.Config]\r\nProfile = Default\r\n[Profiles.Default.IgnoreMods]\r\nDisabledPack\r\n",
+        )
+        .unwrap();
+
+        let mut dff = Vec::new();
+        dff.extend_from_slice(&rw_hdr(0x0010, 4));
+        dff.extend_from_slice(&[0; 4]);
+        fs::write(dir.join("modloader").join("EnabledPack").join("car.dff"), &dff).unwrap();
+        fs::write(dir.join("modloader").join("DisabledPack").join("car.dff"), &dff).unwrap();
+
+        // Truncated IFP claiming 100 bytes body
+        let mut bad_ifp = Vec::new();
+        bad_ifp.extend_from_slice(b"ANPK");
+        bad_ifp.extend_from_slice(&100u32.to_le_bytes());
+        bad_ifp.extend_from_slice(&[0u8; 8]);
+        fs::write(dir.join("modloader").join("EnabledPack").join("trunc.ifp"), &bad_ifp).unwrap();
+
+        let rep = scan_game_assets(&dir);
+        assert_eq!(rep.dff_count, 1);
+        assert_eq!(rep.duplicate_count, 0);
+        assert_eq!(rep.ifp_count, 1);
+        assert_eq!(rep.error_count, 1);
+        assert!(!rep.truncated_issues);
 
         let _ = fs::remove_dir_all(&dir);
     }

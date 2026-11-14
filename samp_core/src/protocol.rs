@@ -12,6 +12,8 @@ pub struct QueryInfo {
     pub mode: String,
     pub language: String,
     pub is_open_mp: bool,
+    #[serde(default)]
+    pub password_locked: bool,
 }
 
 impl Default for QueryInfo {
@@ -25,6 +27,7 @@ impl Default for QueryInfo {
             mode: String::new(),
             language: String::new(),
             is_open_mp: false,
+            password_locked: false,
         }
     }
 }
@@ -53,6 +56,14 @@ pub fn build_query_packet(ip: Ipv4Addr, port: u16, opcode: u8) -> [u8; 11] {
         (port & 0xFF) as u8,
         ((port >> 8) & 0xFF) as u8,
         opcode,
+    ]
+}
+
+pub fn build_ping_packet(ip: Ipv4Addr, port: u16, cookie: [u8; 4]) -> [u8; 15] {
+    let q = build_query_packet(ip, port, b'p');
+    [
+        q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10], cookie[0], cookie[1],
+        cookie[2], cookie[3],
     ]
 }
 
@@ -100,9 +111,10 @@ fn read_str32(b: &[u8], off: &mut usize) -> String {
 /// Format: "SAMP" (4) + ip (4) + port (2) + 'i' (1) + password (1) + players (2) + max (2)
 ///       + hostname_len (4) + hostname + gamemode_len (4) + gamemode + language_len (4) + language
 pub fn parse_info_packet(buf: &[u8], ping_ms: i32) -> Option<QueryInfo> {
-    if buf.len() <= 20 || &buf[0..4] != b"SAMP" || buf[10] != b'i' {
+    if buf.len() < 28 || &buf[0..4] != b"SAMP" || buf[10] != b'i' {
         return None;
     }
+    let password_locked = buf[11] != 0;
     let players = le16(buf, 12)? as i32;
     let max = le16(buf, 14)? as i32;
     let mut off = 16usize;
@@ -118,6 +130,7 @@ pub fn parse_info_packet(buf: &[u8], ping_ms: i32) -> Option<QueryInfo> {
         mode,
         language,
         is_open_mp: false,
+        password_locked,
     })
 }
 
@@ -157,10 +170,13 @@ pub fn parse_rules_packet(buf: &[u8]) -> Option<Vec<[String; 2]>> {
 
 /// Parses SA-MP 'd' (100) detailed player list: [id, name, score, ping].
 pub fn parse_players_detailed(buf: &[u8]) -> Option<Vec<[String; 4]>> {
-    if buf.len() <= 13 || &buf[0..4] != b"SAMP" || buf[10] != b'd' {
+    if buf.len() < 13 || &buf[0..4] != b"SAMP" || buf[10] != b'd' {
         return None;
     }
     let count = le16(buf, 11)? as usize;
+    if count == 0 {
+        return Some(Vec::new());
+    }
     let mut off = 13usize;
     let mut out = Vec::with_capacity(count.min(256));
     for _ in 0..count {
@@ -325,5 +341,13 @@ mod tests {
     fn test_truncated_packet_safe() {
         let short = b"SAMP\x7f\x00\x00\x01\x61\x1ei\x00";
         assert!(parse_info_packet(short, 10).is_none());
+        let short_27 = vec![b'S', b'A', b'M', b'P', 127, 0, 0, 1, 0x61, 0x1e, b'i', 1];
+        let mut p27 = short_27;
+        p27.resize(27, 0);
+        assert!(parse_info_packet(&p27, 10).is_none());
+        let mut p28 = p27;
+        p28.push(0);
+        let parsed = parse_info_packet(&p28, 12).expect("28-byte minimal packet valid");
+        assert!(parsed.password_locked);
     }
 }

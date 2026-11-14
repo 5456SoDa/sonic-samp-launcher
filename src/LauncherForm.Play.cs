@@ -17,6 +17,31 @@ internal partial class LauncherForm
 	private RoundedBtn btnNickRand;
 	private Label lblAutoConnect;
 	private Label lblQuickTitle;
+	private ContextMenuStrip nickCms;
+	private ContextMenuStrip srvCms;
+
+	private static void DisposeClearControls(Control parent)
+	{
+		if (parent == null) return;
+		Control[] copy = new Control[parent.Controls.Count];
+		parent.Controls.CopyTo(copy, 0);
+		parent.Controls.Clear();
+		foreach (Control c in copy)
+		{
+			if (c != null)
+			{
+				try { c.Dispose(); } catch { }
+			}
+		}
+	}
+
+	private static string TruncateGraphemes(string s, int maxElements)
+	{
+		if (string.IsNullOrEmpty(s) || maxElements <= 1) return s ?? "";
+		System.Globalization.StringInfo si = new System.Globalization.StringInfo(s);
+		if (si.LengthInTextElements <= maxElements) return s;
+		return si.SubstringByTextElements(0, maxElements - 1) + "…";
+	}
 
 	private void BuildPlayPage()
 	{
@@ -29,7 +54,7 @@ internal partial class LauncherForm
 
 		lblHeroName = new Label();
 		lblHeroName.Text = "กรอก IP เพื่อตรวจสถานะเซิร์ฟเวอร์";
-		lblHeroName.Font = new Font("Segoe UI Semibold", 13.5f, FontStyle.Bold);
+		lblHeroName.Font = GetCachedFont("Segoe UI Semibold", 13.5f, FontStyle.Bold);
 		lblHeroName.ForeColor = Color.White;
 		lblHeroName.BackColor = Color.Transparent;
 		lblHeroName.Location = new Point(20, 14);
@@ -39,7 +64,7 @@ internal partial class LauncherForm
 
 		lblHeroIp = new Label();
 		lblHeroIp.Text = "—";
-		lblHeroIp.Font = new Font("Segoe UI Semibold", 9.5f);
+		lblHeroIp.Font = GetCachedFont("Segoe UI Semibold", 9.5f, FontStyle.Regular);
 		lblHeroIp.ForeColor = colAccent;
 		lblHeroIp.BackColor = Color.Transparent;
 		lblHeroIp.Location = new Point(20, 44);
@@ -48,7 +73,7 @@ internal partial class LauncherForm
 
 		lblHeroMode = new Label();
 		lblHeroMode.Text = "";
-		lblHeroMode.Font = new Font("Segoe UI Semibold", 9f);
+		lblHeroMode.Font = GetCachedFont("Segoe UI Semibold", 9f, FontStyle.Regular);
 		lblHeroMode.ForeColor = colSub;
 		lblHeroMode.BackColor = Color.Transparent;
 		lblHeroMode.Location = new Point(20, 68);
@@ -58,7 +83,7 @@ internal partial class LauncherForm
 
 		lblHeroPing = new Label();
 		lblHeroPing.Text = "";
-		lblHeroPing.Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold);
+		lblHeroPing.Font = GetCachedFont("Segoe UI Semibold", 9.5f, FontStyle.Bold);
 		lblHeroPing.ForeColor = colOk;
 		lblHeroPing.BackColor = Color.Transparent;
 		lblHeroPing.Location = new Point(20, 92);
@@ -83,7 +108,7 @@ internal partial class LauncherForm
 		pnlHeroCard.Controls.Add(heroSpark);
 
 		btnHeroRefresh = MakeMiniBtn("↻", 602, 56, 36, 36);
-		btnHeroRefresh.Font = new Font("Segoe UI", 13f, FontStyle.Bold);
+		btnHeroRefresh.Font = GetCachedFont("Segoe UI", 13f, FontStyle.Bold);
 		btnHeroRefresh.BorderColor = colAccent;
 		btnHeroRefresh.Click += delegate
 		{
@@ -166,6 +191,7 @@ internal partial class LauncherForm
 			{
 				return;
 			}
+			NormalizeHostPortInputs();
 			string curKey = FieldVal(txtIp) + ":" + FieldVal(txtPort);
 			if (curKey != playQueryKey)
 			{
@@ -174,40 +200,6 @@ internal partial class LauncherForm
 		};
 		txtIp.LostFocus += onTargetEditLeave;
 		txtPort.LostFocus += onTargetEditLeave;
-
-		txtIp.TextChanged += delegate
-		{
-			string val = txtIp.Text.Trim();
-			string normalized = val;
-			if (normalized.StartsWith("samp://", StringComparison.OrdinalIgnoreCase))
-			{
-				normalized = normalized.Substring(7);
-			}
-			int slash = normalized.IndexOf('/');
-			if (slash >= 0)
-			{
-				normalized = normalized.Substring(0, slash);
-			}
-			int colon = normalized.LastIndexOf(':');
-			if (colon > 0)
-			{
-				string hostPart = normalized.Substring(0, colon).Trim();
-				string portPart = normalized.Substring(colon + 1).Trim();
-				int parsedPort;
-				if (hostPart.Length > 0 && int.TryParse(portPart, out parsedPort) && parsedPort >= 1 && parsedPort <= 65535)
-				{
-					ForceText(txtIp, hostPart);
-					ForceText(txtPort, parsedPort.ToString());
-					QueryPlayServer();
-					return;
-				}
-			}
-			if (normalized != val && normalized.Length > 0)
-			{
-				ForceText(txtIp, normalized);
-				QueryPlayServer();
-			}
-		};
 
 		swAuto = new ToggleSwitch();
 		swAuto.Location = new Point(16, 86);
@@ -222,7 +214,7 @@ internal partial class LauncherForm
 		lblAutoConnect = AddLbl(pnlSrvBox, "เชื่อมต่ออัตโนมัติเมื่อเปิด Launcher", fSmall, 68, 90, colSub);
 
 		// 3. Primary Action Button: Full-Width Cyber Yellow (Y=302, H=54, W=756)
-		btnConnect = new RoundedBtn("▶   เข้าสู่เกม (LAUNCH GAME)", colYellow, colYellowHi, Color.FromArgb(11, 14, 20), 12, new Font("Segoe UI", 13.5f, FontStyle.Bold));
+		btnConnect = new RoundedBtn("▶   เข้าสู่เกม (LAUNCH GAME)", colYellow, colYellowHi, Color.FromArgb(11, 14, 20), 12, GetCachedFont("Segoe UI", 13.5f, FontStyle.Bold));
 		btnConnect.BorderColor = Color.FromArgb(255, 245, 120);
 		btnConnect.Location = new Point(0, 302);
 		btnConnect.Size = new Size(756, 54);
@@ -241,9 +233,50 @@ internal partial class LauncherForm
 		pnlPlay.Controls.Add(chipPanel);
 	}
 
+	private void NormalizeHostPortInputs()
+	{
+		if (txtIp == null || txtPort == null) return;
+		string val = FieldVal(txtIp);
+		if (string.IsNullOrEmpty(val)) return;
+		string normalized = val.Trim();
+		if (normalized.StartsWith("samp://", StringComparison.OrdinalIgnoreCase))
+		{
+			normalized = normalized.Substring(7);
+		}
+		int slash = normalized.IndexOf('/');
+		if (slash >= 0)
+		{
+			normalized = normalized.Substring(0, slash);
+		}
+		int colon = normalized.LastIndexOf(':');
+		if (colon > 0)
+		{
+			string hostPart = normalized.Substring(0, colon).Trim();
+			string portPart = normalized.Substring(colon + 1).Trim();
+			int parsedPort;
+			if (hostPart.Length > 0 && int.TryParse(portPart, out parsedPort) && parsedPort >= 1 && parsedPort <= 65535)
+			{
+				ForceText(txtIp, hostPart);
+				ForceText(txtPort, parsedPort.ToString());
+				return;
+			}
+		}
+		if (normalized != val && normalized.Length > 0)
+		{
+			ForceText(txtIp, normalized);
+		}
+	}
+
 	private void ShowNickProfilesMenu(Control anchor)
 	{
+		if (nickCms != null)
+		{
+			nickCms.Close();
+			nickCms.Dispose();
+			nickCms = null;
+		}
 		ContextMenuStrip cms = new ContextMenuStrip();
+		nickCms = cms;
 		cms.Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors());
 		cms.BackColor = colSide;
 		cms.ForeColor = colText;
@@ -378,6 +411,8 @@ internal partial class LauncherForm
 		{
 			txtNick.Parent.Location = new Point(inPad, DpiHelper.S(34));
 			txtNick.Parent.Size = new Size(leftW - inPad * 2, boxH);
+			int padNick = Math.Max(2, (boxH - txtNick.PreferredHeight) / 2);
+			txtNick.Parent.Padding = new Padding(DpiHelper.S(12), padNick, DpiHelper.S(12), padNick);
 		}
 		int halfBtnW = (leftW - inPad * 2 - DpiHelper.S(10)) / 2;
 		btnNickProfiles.Location = new Point(inPad, DpiHelper.S(84));
@@ -392,21 +427,27 @@ internal partial class LauncherForm
 		int portW = DpiHelper.S(68);
 		int ipW = Math.Max(DpiHelper.S(105), (int)((srvInnerW - portW - fieldGap * 2) * 0.57));
 		int passW = Math.Max(DpiHelper.S(70), srvInnerW - ipW - portW - fieldGap * 2);
+		int padSrv = Math.Max(2, (boxH - txtIp.PreferredHeight) / 2);
 		if (txtIp.Parent != null)
 		{
 			txtIp.Parent.Location = new Point(inPad, DpiHelper.S(34));
 			txtIp.Parent.Size = new Size(ipW, boxH);
+			txtIp.Parent.Padding = new Padding(DpiHelper.S(12), padSrv, DpiHelper.S(12), padSrv);
 		}
 		if (txtPort.Parent != null)
 		{
 			txtPort.Parent.Location = new Point(inPad + ipW + fieldGap, DpiHelper.S(34));
 			txtPort.Parent.Size = new Size(portW, boxH);
+			txtPort.Parent.Padding = new Padding(DpiHelper.S(12), padSrv, DpiHelper.S(12), padSrv);
 		}
 		if (txtServerPass.Parent != null)
 		{
 			txtServerPass.Parent.Location = new Point(inPad + ipW + portW + fieldGap * 2, DpiHelper.S(34));
 			txtServerPass.Parent.Size = new Size(passW, boxH);
+			txtServerPass.Parent.Padding = new Padding(DpiHelper.S(12), padSrv, DpiHelper.S(12), padSrv);
 		}
+		pnlNickBox.Invalidate();
+		pnlSrvBox.Invalidate();
 		swAuto.Location = new Point(DpiHelper.S(16), DpiHelper.S(86));
 		swAuto.Size = new Size(DpiHelper.S(44), DpiHelper.S(24));
 		if (lblAutoConnect != null)
@@ -475,7 +516,7 @@ internal partial class LauncherForm
 		{
 			return;
 		}
-		chipPanel.Controls.Clear();
+		DisposeClearControls(chipPanel);
 		System.Collections.Generic.List<ServerEntry> list = new System.Collections.Generic.List<ServerEntry>();
 		list.AddRange(favs);
 		list.AddRange(hist);
@@ -486,10 +527,7 @@ internal partial class LauncherForm
 			{
 				ServerEntry ce = item;
 				string text = ((ce.Name.Length > 0) ? ce.Name : (ce.Ip + ":" + ce.Port));
-				if (text.Length > 24)
-				{
-					text = text.Substring(0, 23) + "…";
-				}
+				text = TruncateGraphemes(text, 24);
 				RoundedBtn roundedBtn = MakeMiniBtn(text, num * DpiHelper.S(184), DpiHelper.S(3), DpiHelper.S(176), DpiHelper.S(36));
 				roundedBtn.Click += delegate
 				{
@@ -596,11 +634,6 @@ internal partial class LauncherForm
 			}
 			string ip = key.Substring(0, num);
 			string port = key.Substring(num + 1);
-			int pNum;
-			if (int.TryParse(port, out pNum) && pNum > 0 && pNum <= 65535)
-			{
-				StartActiveSpark(ip, pNum);
-			}
 			ServerEntry serverEntry = FindEntry(ip, port, false);
 			if (serverEntry != null)
 			{
@@ -608,6 +641,7 @@ internal partial class LauncherForm
 				ApplyEntryQuery(serverEntry, qr);
 				if (!string.Equals(prevName, serverEntry.Name, StringComparison.Ordinal))
 				{
+					try { core.RenameSavedServer(serverEntry.Ip, serverEntry.Port, serverEntry.Name); } catch { }
 					RebuildChips();
 					if (cfgReady)
 					{
@@ -638,6 +672,7 @@ internal partial class LauncherForm
 		{
 			return;
 		}
+		NormalizeHostPortInputs();
 		string text = FieldVal(txtNick);
 		string text2 = FieldVal(txtIp);
 		string text3 = FieldVal(txtPort);
@@ -688,7 +723,7 @@ internal partial class LauncherForm
 			ShowErr("ไม่พบ samp.dll\r\nต้องติดตั้ง SA-MP ไว้ในโฟลเดอร์เกมก่อน");
 			return;
 		}
-		if (Process.GetProcessesByName("gta_sa").Length > 0)
+		if (core.IsGameRunning())
 		{
 			ShowErr("gta_sa.exe กำลังรันอยู่ ปิดเกมเดิมก่อนเข้าสู่เกมใหม่");
 			return;
@@ -751,9 +786,10 @@ internal partial class LauncherForm
 
 		string sPass = (txtServerPass != null) ? FieldVal(txtServerPass) : "";
 		ServerEntry matchedEntry = FindEntry(host, portStr, false);
-		if (string.IsNullOrEmpty(sPass) && matchedEntry != null && matchedEntry.Locked)
+		bool isLocked = (check != null && check.Locked) || (matchedEntry != null && matchedEntry.Locked);
+		if (string.IsNullOrEmpty(sPass) && isLocked)
 		{
-			string dName = (check != null && !string.IsNullOrEmpty(check.Name)) ? check.Name : ((matchedEntry.Name.Length > 0) ? matchedEntry.Name : (host + ":" + portStr));
+			string dName = (check != null && !string.IsNullOrEmpty(check.Name)) ? check.Name : ((matchedEntry != null && matchedEntry.Name.Length > 0) ? matchedEntry.Name : (host + ":" + portStr));
 			string prompted = PromptPassword(dName);
 			if (prompted == null)
 			{
@@ -765,15 +801,19 @@ internal partial class LauncherForm
 			sPass = prompted;
 		}
 
-		SaveConfig();
-		AddHistory(host, portStr);
 		SetStatus("กำลังเปิดเกม...");
 		Refresh();
 		bool flag = false;
 		try
 		{
+			if (!StartGameAndInject(gtaExe, sampDll, gameDir, nick, host, portStr, sPass))
+			{
+				SetStatus("Nickname ไม่ถูกต้อง");
+				return;
+			}
 			CyberAudio.PlayLaunch();
-			StartGameAndInject(gtaExe, sampDll, gameDir, nick, host, portStr, sPass);
+			SaveConfig();
+			AddHistory(host, portStr);
 			flag = true;
 			SetStatus("เกมกำลังทำงาน • เชื่อมต่อ " + host + ":" + portStr);
 		}
@@ -791,6 +831,13 @@ internal partial class LauncherForm
 		{
 			bool closeAfter = swClose.Checked;
 			StartPlaytime(host + "|" + portStr, closeAfter);
+			try
+			{
+				core.TrimLauncherMemory();
+			}
+			catch
+			{
+			}
 			string sName = (check != null && check.Online && check.Name.Length > 0) ? check.Name : ((lblHeroName != null && !string.IsNullOrEmpty(lblHeroName.Text) && !lblHeroName.Text.StartsWith("กรอก") && !lblHeroName.Text.StartsWith("กำลัง") && !lblHeroName.Text.StartsWith("IP / Port")) ? lblHeroName.Text : (host + ":" + portStr));
 			int pCur = (check != null && check.Online) ? check.Players : ((ring != null) ? ring.Current : -1);
 			int pMax = (check != null && check.Online) ? check.Max : ((ring != null) ? ring.Max : -1);
@@ -810,15 +857,16 @@ internal partial class LauncherForm
 		}
 	}
 
-	private void StartGameAndInject(string gtaPath, string dllPath, string workDir, string nick, string ip, string port, string pass)
+	private bool StartGameAndInject(string gtaPath, string dllPath, string workDir, string nick, string ip, string port, string pass)
 	{
 		string sanitized = SanitizeNick(nick);
 		if (sanitized.Length < 3 || sanitized.Length > 20)
 		{
 			ShowErr("Nickname ไม่ถูกต้อง (ต้องยาว 3-20 ตัวอักษร และใช้อักขระที่ SA-MP รองรับ)\r\nชื่อที่กรอก: " + nick);
-			return;
+			return false;
 		}
 		core.LaunchAndInject(gtaPath, dllPath, workDir, sanitized, ip, port, pass);
+		return true;
 	}
 
 	private string PromptPassword(string serverName)
@@ -828,7 +876,7 @@ internal partial class LauncherForm
 			prompt.Text = "เซิร์ฟเวอร์มีรหัสผ่าน (Password)";
 			prompt.FormBorderStyle = FormBorderStyle.FixedDialog;
 			prompt.StartPosition = FormStartPosition.CenterParent;
-			prompt.Size = new Size(390, 184);
+			prompt.ClientSize = new Size(374, 148);
 			prompt.BackColor = Color.FromArgb(17, 17, 24);
 			prompt.MaximizeBox = false;
 			prompt.MinimizeBox = false;
@@ -837,7 +885,7 @@ internal partial class LauncherForm
 			Label lbl = new Label
 			{
 				Text = "🔒 เซิร์ฟเวอร์ " + serverName + " มีรหัสผ่าน:\r\nกรุณากรอกรหัสผ่านเพื่อเข้าสู่เกม:",
-				Font = new Font("Segoe UI", 9.5f),
+				Font = GetCachedFont("Segoe UI", 9.5f, FontStyle.Regular),
 				ForeColor = Color.White,
 				Location = new Point(20, 16),
 				AutoSize = true
@@ -847,7 +895,7 @@ internal partial class LauncherForm
 			TextBox tb = new TextBox
 			{
 				Text = "",
-				Font = new Font("Segoe UI", 11f),
+				Font = GetCachedFont("Segoe UI", 11f, FontStyle.Regular),
 				BackColor = colField,
 				ForeColor = Color.White,
 				UseSystemPasswordChar = true,
@@ -858,7 +906,7 @@ internal partial class LauncherForm
 			prompt.Controls.Add(tb);
 
 			string entered = null;
-			RoundedBtn btnOk = new RoundedBtn("เข้าเกม", colAccent, colAccentHi, Color.FromArgb(11, 14, 20), 8, new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold))
+			RoundedBtn btnOk = new RoundedBtn("เข้าเกม", colAccent, colAccentHi, Color.FromArgb(11, 14, 20), 8, GetCachedFont("Segoe UI Semibold", 9.5f, FontStyle.Bold))
 			{
 				Location = new Point(176, 102),
 				Size = new Size(96, 32)
@@ -870,7 +918,7 @@ internal partial class LauncherForm
 			};
 			prompt.Controls.Add(btnOk);
 
-			RoundedBtn btnCancel = new RoundedBtn("ยกเลิก", Color.FromArgb(36, 36, 52), Color.FromArgb(48, 48, 70), Color.FromArgb(160, 160, 180), 8, new Font("Segoe UI", 9.5f))
+			RoundedBtn btnCancel = new RoundedBtn("ยกเลิก", Color.FromArgb(36, 36, 52), Color.FromArgb(48, 48, 70), Color.FromArgb(160, 160, 180), 8, GetCachedFont("Segoe UI", 9.5f, FontStyle.Regular))
 			{
 				Location = new Point(280, 102),
 				Size = new Size(72, 32)
@@ -879,6 +927,7 @@ internal partial class LauncherForm
 			prompt.Controls.Add(btnCancel);
 			prompt.AcceptButton = btnOk;
 			prompt.CancelButton = btnCancel;
+			DpiHelper.ScaleControlTree(prompt);
 
 			if (prompt.ShowDialog(this) == DialogResult.OK)
 			{

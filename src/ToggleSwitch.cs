@@ -10,6 +10,8 @@ internal class ToggleSwitch : Control
 
 	private float pos;
 
+	private float startPos;
+
 	private Timer tmr;
 
 	private Stopwatch swt;
@@ -27,13 +29,33 @@ internal class ToggleSwitch : Control
 			if (on != value)
 			{
 				on = value;
-				StartAnim();
+				if (!IsHandleCreated)
+				{
+					pos = on ? 1f : 0f;
+					Invalidate();
+				}
+				else
+				{
+					StartAnim();
+				}
 				if (this.CheckedChanged != null)
 				{
 					this.CheckedChanged(this, EventArgs.Empty);
 				}
 			}
 		}
+	}
+
+	public void SetCheckedSilent(bool value)
+	{
+		on = value;
+		pos = value ? 1f : 0f;
+		startPos = pos;
+		if (tmr != null)
+		{
+			tmr.Stop();
+		}
+		Invalidate();
 	}
 
 	public event EventHandler CheckedChanged;
@@ -52,6 +74,13 @@ internal class ToggleSwitch : Control
 
 	private void StartAnim()
 	{
+		if (tmr == null)
+		{
+			pos = on ? 1f : 0f;
+			Invalidate();
+			return;
+		}
+		startPos = pos;
 		swt = Stopwatch.StartNew();
 		tmr.Stop();
 		tmr.Start();
@@ -59,17 +88,23 @@ internal class ToggleSwitch : Control
 
 	private void Tick(object s, EventArgs e)
 	{
-		if (base.IsDisposed)
+		if (base.IsDisposed || tmr == null)
 		{
-			tmr.Stop();
-			tmr.Dispose();
+			if (tmr != null)
+			{
+				tmr.Stop();
+				tmr.Dispose();
+				tmr = null;
+			}
 			return;
 		}
 		float num = Math.Min(1f, (float)swt.ElapsedMilliseconds / 150f);
-		pos = Anim.EaseOut(num);
+		float target = on ? 1f : 0f;
+		pos = startPos + (target - startPos) * Anim.EaseOut(num);
 		Invalidate();
 		if (num >= 1f)
 		{
+			pos = target;
 			tmr.Stop();
 		}
 	}
@@ -85,7 +120,7 @@ internal class ToggleSwitch : Control
 	{
 		Graphics graphics = e.Graphics;
 		graphics.SmoothingMode = SmoothingMode.AntiAlias;
-		float num = (on ? pos : (1f - pos));
+		float num = Math.Max(0f, Math.Min(1f, pos));
 		Color color = Anim.Lerp(Color.FromArgb(16, 23, 36), OnColor, num);
 		using (SolidBrush brush = new SolidBrush(color))
 		{
@@ -118,7 +153,9 @@ internal class ToggleSwitch : Control
 	{
 		if (disposing && tmr != null)
 		{
+			tmr.Stop();
 			tmr.Dispose();
+			tmr = null;
 		}
 		base.Dispose(disposing);
 	}

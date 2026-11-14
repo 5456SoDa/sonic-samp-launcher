@@ -1,16 +1,21 @@
 use crate::query::{
-    register_scan, run_batch_queries, PublicListItem, ScanState, ServerTarget,
+    register_scan, run_batch_queries, shared_runtime, PublicListItem, ScanState, ServerTarget,
 };
+use crate::win_ro::to_wide;
 use serde::Deserialize;
+use std::ffi::c_void;
 use std::fs;
 use std::path::Path;
 use std::ptr::{null, null_mut};
+use std::sync::atomic::Ordering;
 use windows_sys::Win32::Networking::WinHttp::{
     WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
     WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
-    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_FLAG_NUMBER,
-    WINHTTP_QUERY_STATUS_CODE,
+    WinHttpSetTimeouts, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_FLAG_SECURE,
+    WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
 };
+
+const MAX_PUBLIC_LIST_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct OpenMpApiServer {
@@ -24,13 +29,20 @@ struct OpenMpApiServer {
     vn: Option<String>,
 }
 
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
+struct WinHttpHandle(*mut c_void);
+impl Drop for WinHttpHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                WinHttpCloseHandle(self.0);
+            }
+        }
+    }
 }
 
-fn winhttp_get(host: &str, path: &str) -> Result<String, String> {
+fn winhttp_get(host: &str, path: &str, state: &ScanState) -> Result<String, String> {
     unsafe {
-        let ua = to_wide("SonicSampLauncher/2.3");
+        let ua = to_wide("SonicSampLauncher/2.4");
         let h_session = WinHttpOpen(
             ua.as_ptr(),
             WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -41,18 +53,20 @@ fn winhttp_get(host: &str, path: &str) -> Result<String, String> {
         if h_session.is_null() {
             return Err("WinHttpOpen failed".into());
         }
+        let session = WinHttpHandle(h_session);
+        let _ = WinHttpSetTimeouts(session.0, 5000, 5000, 8000, 12000);
 
         let host_w = to_wide(host);
-        let h_connect = WinHttpConnect(h_session, host_w.as_ptr(), 443, 0);
+        let h_connect = WinHttpConnect(session.0, host_w.as_ptr(), 443, 0);
         if h_connect.is_null() {
-            WinHttpCloseHandle(h_session);
             return Err("WinHttpConnect failed".into());
         }
+        let connect = WinHttpHandle(h_connect);
 
         let verb_w = to_wide("GET");
         let path_w = to_wide(path);
         let h_request = WinHttpOpenRequest(
-            h_connect,
+            connect.0,
             verb_w.as_ptr(),
             path_w.as_ptr(),
             null(),
@@ -61,23 +75,19 @@ fn winhttp_get(host: &str, path: &str) -> Result<String, String> {
             WINHTTP_FLAG_SECURE,
         );
         if h_request.is_null() {
-            WinHttpCloseHandle(h_connect);
-            WinHttpCloseHandle(h_session);
             return Err("WinHttpOpenRequest failed".into());
         }
+        let request = WinHttpHandle(h_request);
 
-        let ok_send = WinHttpSendRequest(h_request, null(), 0, null_mut(), 0, 0, 0);
-        if ok_send == 0 || WinHttpReceiveResponse(h_request, null_mut()) == 0 {
-            WinHttpCloseHandle(h_request);
-            WinHttpCloseHandle(h_connect);
-            WinHttpCloseHandle(h_session);
+        let ok_send = WinHttpSendRequest(request.0, null(), 0, null_mut(), 0, 0, 0);
+        if ok_send == 0 || WinHttpReceiveResponse(request.0, null_mut()) == 0 {
             return Err("HTTP request failed".into());
         }
 
         let mut status: u32 = 0;
         let mut status_len: u32 = std::mem::size_of::<u32>() as u32;
         WinHttpQueryHeaders(
-            h_request,
+            request.0,
             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             std::ptr::null(),
             &mut status as *mut u32 as *mut _,
@@ -85,24 +95,28 @@ fn winhttp_get(host: &str, path: &str) -> Result<String, String> {
             std::ptr::null_mut(),
         );
         if status < 200 || status >= 300 {
-            WinHttpCloseHandle(h_request);
-            WinHttpCloseHandle(h_connect);
-            WinHttpCloseHandle(h_session);
             return Err(format!("HTTP status {}", status));
         }
 
         let mut body = Vec::new();
         loop {
+            if state.cancelled.load(Ordering::Relaxed) {
+                return Err("Cancelled".into());
+            }
             let mut avail: u32 = 0;
-            if WinHttpQueryDataAvailable(h_request, &mut avail) == 0 || avail == 0 {
+            if WinHttpQueryDataAvailable(request.0, &mut avail) == 0 || avail == 0 {
                 break;
             }
-            let mut chunk = vec![0u8; avail as usize];
+            let read_cap = avail.min(262_144);
+            if body.len().saturating_add(avail as usize) > MAX_PUBLIC_LIST_BYTES {
+                return Err("Public server response exceeded 32 MB safety cap".into());
+            }
+            let mut chunk = vec![0u8; read_cap as usize];
             let mut downloaded: u32 = 0;
             if WinHttpReadData(
-                h_request,
+                request.0,
                 chunk.as_mut_ptr() as *mut _,
-                avail,
+                read_cap,
                 &mut downloaded,
             ) == 0
                 || downloaded == 0
@@ -111,10 +125,6 @@ fn winhttp_get(host: &str, path: &str) -> Result<String, String> {
             }
             body.extend_from_slice(&chunk[..downloaded as usize]);
         }
-
-        WinHttpCloseHandle(h_request);
-        WinHttpCloseHandle(h_connect);
-        WinHttpCloseHandle(h_session);
 
         String::from_utf8(body).map_err(|e| format!("Invalid UTF-8: {}", e))
     }
@@ -158,53 +168,68 @@ pub fn parse_openmp_json(raw: &str) -> Result<Vec<PublicListItem>, String> {
 pub fn start_public_scan(cache_path: Option<String>, concurrency: usize) -> u64 {
     let state = ScanState::new();
     let handle = register_scan(state.clone());
+    let scan_state = state.clone();
 
-    std::thread::spawn(move || {
-        let mut from_cache = false;
-        let raw_json = match winhttp_get("api.open.mp", "/servers") {
-            Ok(body) => {
-                if let Some(ref cp) = cache_path {
-                    let _ = fs::write(cp, &body);
-                }
-                Ok(body)
-            }
-            Err(http_err) => {
-                if let Some(ref cp) = cache_path {
-                    if Path::new(cp).exists() {
-                        match fs::read_to_string(cp) {
-                            Ok(cached) => {
-                                from_cache = true;
-                                Ok(cached)
-                            }
-                            Err(_) => Err(http_err),
-                        }
-                    } else {
-                        Err(http_err)
+    shared_runtime().spawn(async move {
+        let cp_clone = cache_path.clone();
+        let st_http = scan_state.clone();
+        let raw_json = tokio::task::spawn_blocking(move || {
+            let mut from_cache = false;
+            let res = match winhttp_get("api.open.mp", "/servers", &st_http) {
+                Ok(body) => {
+                    if let Some(ref cp) = cp_clone {
+                        let _ = fs::write(cp, &body);
                     }
-                } else {
+                    Ok(body)
+                }
+                Err(http_err) => {
+                    if !st_http.cancelled.load(Ordering::Relaxed) {
+                        if let Some(ref cp) = cp_clone {
+                            if Path::new(cp).exists() {
+                                if let Ok(cached) = fs::read_to_string(cp) {
+                                    from_cache = true;
+                                    return (Ok(cached), from_cache);
+                                }
+                            }
+                        }
+                    }
                     Err(http_err)
                 }
-            }
-        };
+            };
+            (res, from_cache)
+        })
+        .await
+        .unwrap_or_else(|e| (Err(e.to_string()), false));
 
-        let body = match raw_json {
+        if scan_state.cancelled.load(Ordering::Relaxed) {
+            scan_state.done.store(true, Ordering::Relaxed);
+            return;
+        }
+
+        let (body_res, from_cache) = raw_json;
+        let body = match body_res {
             Ok(b) => b,
             Err(e) => {
-                if let Ok(mut err) = state.error.lock() {
+                if let Ok(mut err) = scan_state.error.lock() {
                     *err = Some(e);
                 }
-                state.done.store(true, std::sync::atomic::Ordering::Relaxed);
+                scan_state.done.store(true, Ordering::Relaxed);
                 return;
             }
         };
 
+        if scan_state.cancelled.load(Ordering::Relaxed) {
+            scan_state.done.store(true, Ordering::Relaxed);
+            return;
+        }
+
         let items = match parse_openmp_json(&body) {
             Ok(v) => v,
             Err(e) => {
-                if let Ok(mut err) = state.error.lock() {
+                if let Ok(mut err) = scan_state.error.lock() {
                     *err = Some(e);
                 }
-                state.done.store(true, std::sync::atomic::Ordering::Relaxed);
+                scan_state.done.store(true, Ordering::Relaxed);
                 return;
             }
         };
@@ -219,21 +244,14 @@ pub fn start_public_scan(cache_path: Option<String>, concurrency: usize) -> u64 
             })
             .collect();
 
-        if let Ok(mut init) = state.initial_list.lock() {
+        if let Ok(mut init) = scan_state.initial_list.lock() {
             *init = Some((items, from_cache));
         }
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        match rt {
-            Ok(rt) => rt.block_on(run_batch_queries(targets, concurrency, state)),
-            Err(e) => {
-                if let Ok(mut err) = state.error.lock() {
-                    *err = Some(e.to_string());
-                }
-                state.done.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
+        if !scan_state.cancelled.load(Ordering::Relaxed) {
+            run_batch_queries(targets, concurrency, scan_state).await;
+        } else {
+            scan_state.done.store(true, Ordering::Relaxed);
         }
     });
 

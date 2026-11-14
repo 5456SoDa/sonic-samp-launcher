@@ -1,0 +1,39 @@
+name: Build and Verify
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    name: Build Rust & C# Launcher
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust (i686-pc-windows-msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+
+      - name: Test & Build samp_core (Rust)
+        run: |
+          cd samp_core
+          cargo test --target i686-pc-windows-msvc
+          cargo build --release --target i686-pc-windows-msvc
+
+      - name: Test & Build sonic_guard (Rust)
+        run: |
+          cd sonic_guard
+          cargo test --target i686-pc-windows-msvc
+          cargo build --release --target i686-pc-windows-msvc
+
+      - name: Compile SampLauncher.exe (C#)
+        run: |
+          $csc = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          & $csc /nologo /target:winexe /platform:x86 /unsafe /optimize+ /warn:4 /r:System.dll,System.Core.dll,System.Windows.Forms.dll,System.Drawing.dll,System.Web.Extensions.dll /win32icon:src\app.ico /win32manifest:src\app.manifest /out:SampLauncher.exe src\*.cs src\Properties\*.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

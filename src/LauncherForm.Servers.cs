@@ -19,7 +19,8 @@ internal partial class LauncherForm
 	private string pubCachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "public_servers_cache.json");
 	private Dictionary<string, ServerEntry> activeScanLookup = new Dictionary<string, ServerEntry>();
 	private Dictionary<ServerEntry, ListViewItem> rowByEntry = new Dictionary<ServerEntry, ListViewItem>();
-	private DateTime ptLastFlushUtc;
+	private int ptPolling = 0;
+	private int watchPolling = 0;
 	private bool ptCloseOnExit;
 
 	private RoundedBtn btnSrvAdd;
@@ -39,6 +40,7 @@ internal partial class LauncherForm
 	private Label lblDetEmpty;
 	private RoundedBtn btnDetPlay;
 	private int detTabMode = 0;
+	private int lastDetTabMode = -1;
 	private string activeDetKey = "";
 	private List<string[]> detPlayersCache = null;
 	private List<string[]> detRulesCache = null;
@@ -169,7 +171,7 @@ internal partial class LauncherForm
 		lstSrv.OwnerDraw = true;
 		lstSrv.Location = new Point(0, 78);
 		lstSrv.Size = new Size(432, 314);
-		lstSrv.SmallImageList = new ImageList();
+		lstSrv.SmallImageList = TrackDisposable(new ImageList());
 		lstSrv.SmallImageList.ImageSize = new Size(1, 46);
 		lstSrv.Columns.Add("ชื่อเซิร์ฟเวอร์", 198);
 		lstSrv.Columns.Add("ผู้เล่น", 76);
@@ -300,7 +302,7 @@ internal partial class LauncherForm
 		lblDetTitle = new Label();
 		lblDetTitle.UseMnemonic = false;
 		lblDetTitle.Text = "เลือกเซิร์ฟเวอร์ทางซ้าย";
-		lblDetTitle.Font = new Font("Segoe UI Semibold", 11f, FontStyle.Bold);
+		lblDetTitle.Font = GetCachedFont("Segoe UI Semibold", 11f, FontStyle.Bold);
 		lblDetTitle.ForeColor = Color.White;
 		lblDetTitle.BackColor = Color.Transparent;
 		lblDetTitle.Location = new Point(12, 10);
@@ -400,7 +402,7 @@ internal partial class LauncherForm
 		lvDetList.OwnerDraw = true;
 		lvDetList.Location = new Point(12, 212);
 		lvDetList.Size = new Size(288, 120);
-		lvDetList.SmallImageList = new ImageList();
+		lvDetList.SmallImageList = TrackDisposable(new ImageList());
 		lvDetList.SmallImageList.ImageSize = new Size(1, 24);
 		lvDetList.Columns.Add("ID", 36);
 		lvDetList.Columns.Add("ชื่อผู้เล่น", 140);
@@ -441,7 +443,7 @@ internal partial class LauncherForm
 		lblDetEmpty.Size = new Size(272, 40);
 		lvDetList.Controls.Add(lblDetEmpty);
 
-		btnDetPlay = new RoundedBtn("▷   เล่นเซิร์ฟเวอร์นี้", colYellow, colYellowHi, Color.FromArgb(11, 14, 20), 10, new Font("Segoe UI", 11.5f, FontStyle.Bold));
+		btnDetPlay = new RoundedBtn("▷   เล่นเซิร์ฟเวอร์นี้", colYellow, colYellowHi, Color.FromArgb(11, 14, 20), 10, GetCachedFont("Segoe UI", 11.5f, FontStyle.Bold));
 		btnDetPlay.BorderColor = Color.FromArgb(255, 245, 120);
 		btnDetPlay.Location = new Point(12, 340);
 		btnDetPlay.Size = new Size(288, 40);
@@ -453,7 +455,9 @@ internal partial class LauncherForm
 		UpdateDetTabStyle();
 
 		// Context Menu
+		if (srvCms != null) { srvCms.Dispose(); }
 		ContextMenuStrip contextMenuStrip = new ContextMenuStrip();
+		srvCms = contextMenuStrip;
 		contextMenuStrip.BackColor = colCard;
 		contextMenuStrip.ForeColor = colText;
 		contextMenuStrip.ShowImageMargin = false;
@@ -617,7 +621,7 @@ internal partial class LauncherForm
 			}
 			else if (serverEntry.Locked)
 			{
-				TextRenderer.DrawText(graphics, "\ud83d\udd12", fSmall, new Rectangle(e.Bounds.Right - DpiHelper.S(32), e.Bounds.Y + DpiHelper.S(4), DpiHelper.S(24), DpiHelper.S(20)), colSub, TextFormatFlags.Right | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+				TextRenderer.DrawText(graphics, "\ud83d\udd12", fSmall, new Rectangle(cellBounds.Right - DpiHelper.S(32), cellBounds.Y + DpiHelper.S(4), DpiHelper.S(24), DpiHelper.S(20)), colSub, TextFormatFlags.Right | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 			}
 		}
 		else if (e.ColumnIndex == 1)
@@ -826,7 +830,7 @@ internal partial class LauncherForm
 		if (btnMHist != null)
 		{
 			btnMHist.Visible = !isPub;
-			if (btnMHist.Visible)
+			if (!isPub)
 			{
 				btnMHist.Location = new Point(chipX, chipY);
 				btnMHist.Size = new Size(DpiHelper.S(66), chipH);
@@ -1121,14 +1125,19 @@ internal partial class LauncherForm
 
 		ThreadPool.QueueUserWorkItem(delegate
 		{
-			List<string[]> pl = core.QueryPlayers(se.Ip, port);
-			List<string[]> rl = core.QueryRules(se.Ip, port);
+			ServerDetailsDto det = core.QueryServerDetails(se.Ip, port);
+			List<string[]> pl = (det != null) ? det.Players : null;
+			List<string[]> rl = (det != null) ? det.Rules : null;
 			try
 			{
 				if (!base.IsDisposed)
 				{
 					BeginInvoke((MethodInvoker)delegate
 					{
+						if (det != null && det.Info != null && det.Info.Online)
+						{
+							ApplyEntryQuery(se, det.Info);
+						}
 						if (reqSeq == detRequestSeq && activeDetKey == key)
 						{
 							detPlayersLoading = false;
@@ -1208,18 +1217,26 @@ internal partial class LauncherForm
 		if (lvDetList == null) return;
 		lvDetList.BeginUpdate();
 		lvDetList.Items.Clear();
-		lvDetList.Columns.Clear();
-		if (detTabMode == 0)
+		if (detTabMode != lastDetTabMode || lvDetList.Columns.Count == 0)
 		{
-			lvDetList.Columns.Add("ID", DpiHelper.S(36));
-			lvDetList.Columns.Add("ชื่อผู้เล่น", DpiHelper.S(140));
-			lvDetList.Columns.Add("Score", DpiHelper.S(52));
-			lvDetList.Columns.Add("Ping", DpiHelper.S(52));
-		}
-		else
-		{
-			lvDetList.Columns.Add("พารามิเตอร์", DpiHelper.S(110));
-			lvDetList.Columns.Add("ค่า (Value)", DpiHelper.S(130));
+			lvDetList.Columns.Clear();
+			if (detTabMode == 0)
+			{
+				lvDetList.Columns.Add("ID", DpiHelper.S(36));
+				lvDetList.Columns.Add("ชื่อผู้เล่น", DpiHelper.S(140));
+				lvDetList.Columns.Add("Score", DpiHelper.S(52));
+				lvDetList.Columns.Add("Ping", DpiHelper.S(52));
+			}
+			else
+			{
+				lvDetList.Columns.Add("พารามิเตอร์", DpiHelper.S(110));
+				lvDetList.Columns.Add("ค่า (Value)", DpiHelper.S(130));
+			}
+			lastDetTabMode = detTabMode;
+			if (lvDetList.IsHandleCreated)
+			{
+				try { core.StyleListView(lvDetList.Handle, Color.FromArgb(20, 29, 46), colAccent); } catch { }
+			}
 		}
 
 		if (string.IsNullOrEmpty(activeDetKey))
@@ -1383,6 +1400,14 @@ internal partial class LauncherForm
 				existingFav.Fav = false;
 				hist.Insert(0, existingFav);
 			}
+			try
+			{
+				core.RemoveFavorite(existingFav.Ip, existingFav.Port);
+				core.RecordHistory(existingFav.Ip, existingFav.Port, existingFav.Name ?? "");
+			}
+			catch
+			{
+			}
 			SyncPubFavoriteFlags();
 			SaveConfig();
 			RebuildChips();
@@ -1408,6 +1433,14 @@ internal partial class LauncherForm
 		favEntry.Fav = true;
 		se.Fav = true;
 		favs.Add(favEntry);
+		try
+		{
+			core.RemoveHistory(se.Ip, se.Port);
+			core.UpsertFavorite(se.Ip, se.Port, se.Name ?? "");
+		}
+		catch
+		{
+		}
 		SyncPubFavoriteFlags();
 		SaveConfig();
 		RebuildChips();
@@ -1942,19 +1975,24 @@ internal partial class LauncherForm
 		{
 			return;
 		}
-		InfoDialog dlg = new InfoDialog(e);
+		InfoDialog dlg = new InfoDialog(e, core);
+		dlg.FormClosed += delegate { dlg.Dispose(); };
 		dlg.Show(this);
 		ThreadPool.QueueUserWorkItem(delegate
 		{
-			List<string[]> pl = core.QueryPlayers(e.Ip, port);
-			List<string[]> rl = core.QueryRules(e.Ip, port);
+			ServerDetailsDto det = core.QueryServerDetails(e.Ip, port);
+			List<string[]> pl = (det != null) ? det.Players : null;
+			List<string[]> rl = (det != null) ? det.Rules : null;
 			try
 			{
 				if (!base.IsDisposed && !dlg.IsDisposed)
 				{
 					dlg.BeginInvoke((MethodInvoker)delegate
 					{
-						dlg.SetData(pl, rl);
+						if (!dlg.IsDisposed)
+						{
+							dlg.SetData(pl, rl);
+						}
 					});
 				}
 			}
@@ -2117,10 +2155,12 @@ internal partial class LauncherForm
 	{
 		if (qr.Online)
 		{
+			string prevName = e.Name;
 			e.Name = qr.Name;
 			e.Players = qr.Players;
 			e.Max = qr.Max;
 			e.Ping = qr.Ping;
+			e.Locked = qr.Locked;
 			if (!string.IsNullOrEmpty(qr.Mode) || e.Fav || hist.Contains(e))
 			{
 				e.Mode = qr.Mode ?? "";
@@ -2132,6 +2172,10 @@ internal partial class LauncherForm
 			if (qr.IsOpenMp)
 			{
 				e.IsOpenMp = true;
+			}
+			if ((e.Fav || hist.Contains(e)) && !string.IsNullOrEmpty(e.Name) && e.Name != prevName)
+			{
+				try { core.RenameSavedServer(e.Ip, e.Port, e.Name); } catch { }
 			}
 			if (e.Fav || hist.Contains(e))
 			{
@@ -2160,9 +2204,8 @@ internal partial class LauncherForm
 		it.SubItems[1].Text = ((e.Ping == -2) ? "-" : ((e.Players < 0) ? "-" : (e.Players + "/" + e.Max)));
 		it.SubItems[2].Text = ((e.Ping == -2) ? "..." : ((e.Ping < 0) ? "ออฟ" : (e.Ping + " ms")));
 		it.SubItems[2].ForeColor = ((e.Ping <= 0) ? colSub : ((e.Ping < 120) ? colOk : Color.FromArgb(243, 156, 18)));
-		it.SubItems[3].Text = e.Ip + ":" + e.Port;
-		it.SubItems[4].Text = (e.Fav ? "★ โปรด" : ((viewMode == "public") ? "สาธารณะ" : "ประวัติ"));
-		it.SubItems[4].ForeColor = (e.Fav ? colAccentHi : colSub);
+		it.SubItems[3].Text = (e.Fav ? "★ โปรด" : ((viewMode == "public") ? "สาธารณะ" : "ประวัติ"));
+		it.SubItems[3].ForeColor = (e.Fav ? colAccentHi : colSub);
 		string text = PlaytimeText(e.Ip, e.Port);
 		string text2 = e.Mode;
 		if (e.IsOpenMp)
@@ -2264,7 +2307,6 @@ internal partial class LauncherForm
 		ListViewItem listViewItem = new ListViewItem((e.Name.Length > 0) ? e.Name : (e.Ip + ":" + e.Port));
 		listViewItem.SubItems.Add((e.Players < 0) ? "-" : (e.Players + "/" + e.Max));
 		listViewItem.SubItems.Add((e.Ping < 0) ? "ออฟ" : (e.Ping + " ms"));
-		listViewItem.SubItems.Add(e.Ip + ":" + e.Port);
 		listViewItem.SubItems.Add(e.Fav ? "★ โปรด" : "ประวัติ");
 		listViewItem.Tag = e;
 		lstSrv.Items.Add(listViewItem);
@@ -2276,7 +2318,7 @@ internal partial class LauncherForm
 	{
 		foreach (ServerEntry fav in favs)
 		{
-			if (fav.Ip == ip && fav.Port == port)
+			if (string.Equals(fav.Ip, ip, StringComparison.OrdinalIgnoreCase) && fav.Port == port)
 			{
 				return fav;
 			}
@@ -2285,7 +2327,7 @@ internal partial class LauncherForm
 		{
 			foreach (ServerEntry item in hist)
 			{
-				if (item.Ip == ip && item.Port == port)
+				if (string.Equals(item.Ip, ip, StringComparison.OrdinalIgnoreCase) && item.Port == port)
 				{
 					return item;
 				}
@@ -2347,98 +2389,6 @@ internal partial class LauncherForm
 		}
 	}
 
-	private void AddFavorite()
-	{
-		string ip;
-		string text;
-		ServerEntry sourceEntry = null;
-		if (lstSrv.SelectedItems.Count > 0)
-		{
-			sourceEntry = lstSrv.SelectedItems[0].Tag as ServerEntry;
-			if (sourceEntry == null)
-			{
-				return;
-			}
-			ip = sourceEntry.Ip;
-			text = sourceEntry.Port;
-		}
-		else
-		{
-			ip = FieldVal(txtIp);
-			text = FieldVal(txtPort);
-		}
-		int p;
-		if (ip.Length == 0 || !ValidHost(ip) || !int.TryParse(text, out p) || p < 1 || p > 65535)
-		{
-			ShowErr("กรอก IP และ Port ในหน้าเล่นเกมก่อน");
-			return;
-		}
-		if (FindEntry(ip, text, true) != null)
-		{
-			SetStatus("เซิร์ฟเวอร์นี้อยู่ในรายการโปรดแล้ว");
-			return;
-		}
-		ServerEntry histEntry = FindEntry(ip, text, false);
-		ServerEntry e;
-		if (histEntry != null)
-		{
-			RemoveFromHist(ip, text);
-			histEntry.Fav = true;
-			e = histEntry;
-		}
-		else
-		{
-			e = new ServerEntry();
-			e.Ip = ip;
-			e.Port = text;
-			e.Fav = true;
-			if (sourceEntry != null)
-			{
-				e.Name = sourceEntry.Name;
-				e.Mode = sourceEntry.Mode;
-				e.Language = sourceEntry.Language;
-				e.Password = sourceEntry.Password;
-				e.Players = sourceEntry.Players;
-				e.Max = sourceEntry.Max;
-				e.Ping = sourceEntry.Ping;
-				e.Locked = sourceEntry.Locked;
-				e.IsOpenMp = sourceEntry.IsOpenMp;
-			}
-		}
-		if (sourceEntry != null) sourceEntry.Fav = true;
-		favs.Add(e);
-		SyncPubFavoriteFlags();
-		SaveConfig();
-		RebuildChips();
-		if (viewMode == "public")
-		{
-			ShowView("mine");
-		}
-		else
-		{
-			RebuildList();
-		}
-		SelectEntryInList(e);
-		ToastOk("เพิ่ม " + ip + ":" + text + " เป็นรายการโปรดแล้ว");
-		ThreadPool.QueueUserWorkItem(delegate
-		{
-			QueryResult qr = core.QueryServer(ip, p);
-			try
-			{
-				if (!base.IsDisposed)
-				{
-					BeginInvoke((MethodInvoker)delegate
-					{
-						ApplyEntryQuery(e, qr);
-					});
-				}
-			}
-			catch
-			{
-			}
-		});
-	}
-
 	private void PromptAddServer()
 	{
 		using (Form prompt = new Form())
@@ -2455,7 +2405,7 @@ internal partial class LauncherForm
 			Label lbl = new Label
 			{
 				Text = "กรอก IP:Port, Hostname หรือลิงก์ samp://:",
-				Font = new Font("Segoe UI", 9.5f),
+				Font = GetCachedFont("Segoe UI", 9.5f, FontStyle.Regular),
 				ForeColor = Color.White,
 				Location = new Point(20, 16),
 				AutoSize = true
@@ -2465,7 +2415,7 @@ internal partial class LauncherForm
 			TextBox tb = new TextBox
 			{
 				Text = "",
-				Font = new Font("Segoe UI", 10.5f),
+				Font = GetCachedFont("Segoe UI", 10.5f, FontStyle.Regular),
 				BackColor = colField,
 				ForeColor = Color.White,
 				BorderStyle = BorderStyle.FixedSingle,
@@ -2478,7 +2428,7 @@ internal partial class LauncherForm
 			{
 				Text = "★  เพิ่มเป็นรายการโปรด (Favorite) ด้วย",
 				Checked = true,
-				Font = new Font("Segoe UI", 9.2f),
+				Font = GetCachedFont("Segoe UI", 9.2f, FontStyle.Regular),
 				ForeColor = Color.FromArgb(205, 220, 240),
 				BackColor = Color.Transparent,
 				Location = new Point(22, 82),
@@ -2486,7 +2436,7 @@ internal partial class LauncherForm
 			};
 			prompt.Controls.Add(chkFav);
 
-			RoundedBtn btnOk = new RoundedBtn("เพิ่มเซิร์ฟเวอร์", colAccent, colAccentHi, Color.FromArgb(11, 14, 20), 8, new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold))
+			RoundedBtn btnOk = new RoundedBtn("เพิ่มเซิร์ฟเวอร์", colAccent, colAccentHi, Color.FromArgb(11, 14, 20), 8, GetCachedFont("Segoe UI Semibold", 9.5f, FontStyle.Bold))
 			{
 				Location = new Point(164, 122),
 				Size = new Size(126, 34)
@@ -2509,6 +2459,12 @@ internal partial class LauncherForm
 						RemoveFromHist(addIp, addPort);
 						existing.Fav = true;
 						favs.Add(existing);
+						try
+						{
+							core.RemoveHistory(addIp, addPort);
+							core.UpsertFavorite(addIp, addPort, existing.Name ?? "");
+						}
+						catch { }
 						SyncPubFavoriteFlags();
 						SaveConfig();
 						RebuildChips();
@@ -2530,10 +2486,12 @@ internal partial class LauncherForm
 				if (chkFav.Checked)
 				{
 					favs.Add(e);
+					try { core.UpsertFavorite(addIp, addPort, ""); } catch { }
 				}
 				else
 				{
 					hist.Insert(0, e);
+					try { core.RecordHistory(addIp, addPort, ""); } catch { }
 				}
 				SyncPubFavoriteFlags();
 				SaveConfig();
@@ -2564,7 +2522,7 @@ internal partial class LauncherForm
 			};
 			prompt.Controls.Add(btnOk);
 
-			RoundedBtn btnCancel = new RoundedBtn("ยกเลิก", Color.FromArgb(36, 36, 52), Color.FromArgb(48, 48, 70), Color.FromArgb(160, 160, 180), 8, new Font("Segoe UI", 9.5f))
+			RoundedBtn btnCancel = new RoundedBtn("ยกเลิก", Color.FromArgb(36, 36, 52), Color.FromArgb(48, 48, 70), Color.FromArgb(160, 160, 180), 8, GetCachedFont("Segoe UI", 9.5f, FontStyle.Regular))
 			{
 				Location = new Point(300, 122),
 				Size = new Size(82, 34)
@@ -2583,7 +2541,7 @@ internal partial class LauncherForm
 	{
 		for (int num = hist.Count - 1; num >= 0; num--)
 		{
-			if (hist[num].Ip == ip && hist[num].Port == port)
+			if (string.Equals(hist[num].Ip, ip, StringComparison.OrdinalIgnoreCase) && hist[num].Port == port)
 			{
 				hist.RemoveAt(num);
 			}
@@ -2609,10 +2567,12 @@ internal partial class LauncherForm
 		if (serverEntry.Fav)
 		{
 			favs.Remove(serverEntry);
+			try { core.RemoveFavorite(serverEntry.Ip, serverEntry.Port); } catch { }
 		}
 		else
 		{
 			hist.Remove(serverEntry);
+			try { core.RemoveHistory(serverEntry.Ip, serverEntry.Port); } catch { }
 		}
 		SyncPubFavoriteFlags();
 		SaveConfig();
@@ -2650,6 +2610,7 @@ internal partial class LauncherForm
 		ServerEntry serverEntry = FindEntry(ip, port, false);
 		if (serverEntry == null || !serverEntry.Fav)
 		{
+			string knownName = (serverEntry != null && !string.IsNullOrEmpty(serverEntry.Name)) ? serverEntry.Name : "";
 			if (serverEntry != null)
 			{
 				hist.Remove(serverEntry);
@@ -2657,13 +2618,14 @@ internal partial class LauncherForm
 			ServerEntry serverEntry2 = new ServerEntry();
 			serverEntry2.Ip = ip;
 			serverEntry2.Port = port;
+			serverEntry2.Name = knownName;
 			serverEntry2.Fav = false;
 			hist.Insert(0, serverEntry2);
-			while (hist.Count > 10)
+			while (hist.Count > 30)
 			{
 				hist.RemoveAt(hist.Count - 1);
 			}
-			SaveConfig();
+			try { core.RecordHistory(ip, port, knownName); } catch { }
 			RebuildList();
 			RebuildChips();
 		}
@@ -2695,6 +2657,10 @@ internal partial class LauncherForm
 		}
 		else if (MessageBox.Show(this, "ลบประวัติเซิร์ฟเวอร์ทั้งหมด? (" + hist.Count + " รายการ)\r\nรายการโปรดไม่ถูกลบ", "ยืนยัน", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK)
 		{
+			foreach (ServerEntry h in hist)
+			{
+				try { core.RemoveHistory(h.Ip, h.Port); } catch { }
+			}
 			hist.Clear();
 			SaveConfig();
 			RebuildList();
@@ -2731,7 +2697,9 @@ internal partial class LauncherForm
 		}
 		else
 		{
-			new StatsDialog((serverEntry.Name.Length > 0) ? serverEntry.Name : (serverEntry.Ip + ":" + serverEntry.Port), list, PlaytimeText(serverEntry.Ip, serverEntry.Port)).Show(this);
+			StatsDialog statsDlg = new StatsDialog((serverEntry.Name.Length > 0) ? serverEntry.Name : (serverEntry.Ip + ":" + serverEntry.Port), list, PlaytimeText(serverEntry.Ip, serverEntry.Port));
+			statsDlg.FormClosed += delegate { statsDlg.Dispose(); };
+			statsDlg.Show(this);
 		}
 	}
 
@@ -2742,12 +2710,12 @@ internal partial class LauncherForm
 		{
 			ptServer = key;
 			ptCloseOnExit = closeOnExit;
-			ptLastFlushUtc = DateTime.UtcNow;
+			ptPolling = 0;
 			if (!playtime.ContainsKey(key))
 			{
 				playtime[key] = 0L;
 			}
-			ptTimer = new System.Threading.Timer(PlaytimeTick, null, 5000, 5000);
+			ptTimer = new System.Threading.Timer(PlaytimeTick, null, 2000, 2000);
 		}
 	}
 
@@ -2775,6 +2743,10 @@ internal partial class LauncherForm
 
 	private void PlaytimeTick(object s)
 	{
+		if (Interlocked.CompareExchange(ref ptPolling, 1, 0) != 0)
+		{
+			return;
+		}
 		try
 		{
 			if (base.IsDisposed)
@@ -2783,52 +2755,53 @@ internal partial class LauncherForm
 				return;
 			}
 			string text;
-			DateTime lastFlush;
 			bool closeAfter;
 			lock (ptLock)
 			{
 				text = ptServer;
-				lastFlush = ptLastFlushUtc;
 				closeAfter = ptCloseOnExit;
 			}
 			if (text == null)
 			{
 				return;
 			}
-			DateTime now = DateTime.UtcNow;
-			long elapsed = (long)(now - lastFlush).TotalSeconds;
-			if (Process.GetProcessesByName("gta_sa").Length == 0)
+			WatchdogStatusDto wd = core.PollWatchdog();
+			if (!string.IsNullOrEmpty(wd.ServerKey) && wd.TotalPlaytime > 0)
 			{
-				if (elapsed >= 1 && elapsed < 3600)
+				lock (ptLock)
 				{
-					long totalFinal = core.AddPlaytime(text, elapsed);
-					lock (ptLock)
-					{
-						if (totalFinal > 0)
-						{
-							playtime[text] = totalFinal;
-						}
-						else
-						{
-							playtime[text] = (playtime.ContainsKey(text) ? (playtime[text] + elapsed) : elapsed);
-						}
-					}
+					playtime[wd.ServerKey] = wd.TotalPlaytime;
 				}
+			}
+			if (wd.Exited || !wd.Active)
+			{
 				StopPlaytime();
+				try { core.StopWatchdog(); } catch { }
 				if (!base.IsDisposed)
 				{
 					try
 					{
 						BeginInvoke((MethodInvoker)delegate
 						{
-							if (closeAfter)
+							if (base.IsDisposed) return;
+							if (wd.Crashed)
+							{
+								RestoreFromTrayOrHidden();
+								CyberAudio.PlayAlert();
+								if (wd.Crash != null)
+								{
+									ShowCrashReportDialog(wd.Crash);
+								}
+								if (closeAfter) Close();
+								else SetStatus("พร้อมเชื่อมต่อ");
+							}
+							else if (closeAfter)
 							{
 								Close();
 							}
 							else
 							{
 								SetStatus("พร้อมเชื่อมต่อ");
-								CheckPostGameCrash();
 							}
 						});
 					}
@@ -2836,37 +2809,14 @@ internal partial class LauncherForm
 					{
 					}
 				}
-				return;
-			}
-			if (elapsed < 30)
-			{
-				return;
-			}
-			lock (ptLock)
-			{
-				if (ptServer == text)
-				{
-					ptLastFlushUtc = now;
-				}
-			}
-			long total = core.AddPlaytime(text, elapsed);
-			lock (ptLock)
-			{
-				if (ptServer == text)
-				{
-					if (total > 0)
-					{
-						playtime[text] = total;
-					}
-					else
-					{
-						playtime[text] = (playtime.ContainsKey(text) ? (playtime[text] + elapsed) : elapsed);
-					}
-				}
 			}
 		}
 		catch
 		{
+		}
+		finally
+		{
+			Interlocked.Exchange(ref ptPolling, 0);
 		}
 	}
 
@@ -2926,104 +2876,118 @@ internal partial class LauncherForm
 		{
 			return;
 		}
-		watchEntry = e;
-		SetStatus("กำลังตรวจ " + e.Ip + ":" + e.Port + "...");
-		ThreadPool.QueueUserWorkItem(delegate
+		if (!core.StartSlotWatch(e.Ip, port))
 		{
-			QueryResult qr = core.QueryServer(e.Ip, port);
-			try
-			{
-				if (!base.IsDisposed)
-				{
-					BeginInvoke((MethodInvoker)delegate
-					{
-						if (watchEntry == e)
-						{
-							if (qr.Online && qr.Players < qr.Max)
-							{
-								watchEntry = null;
-								ShowSlotToast(e, qr.Players, qr.Max);
-							}
-							else
-							{
-								watchTimer = new System.Threading.Timer(WatchTick, e, 8000, 25000);
-								if (miWatch != null)
-								{
-									miWatch.Text = "■   หยุดเฝ้าดู (" + e.Ip + ":" + e.Port + ")";
-								}
-								if (btnWatch != null)
-								{
-									btnWatch.Text = "■  หยุด (" + e.Ip + ")";
-									btnWatch.SetPalette(Color.FromArgb(180, 40, 50), Color.FromArgb(220, 50, 60));
-									btnWatch.BorderColor = Color.FromArgb(255, 99, 99);
-								}
-								string text = (qr.Online ? (qr.Players + "/" + qr.Max) : "ออฟไลน์");
-								SetStatus("🔔 กำลังเฝ้าดู " + e.Ip + ":" + e.Port + " (" + text + ") — เช็กทุก 25 วินาที มีที่ว่างจะแจ้งทันที");
-							}
-						}
-					});
-				}
-			}
-			catch
-			{
-			}
-		});
+			ShowErr("ไม่สามารถเริ่มเฝ้าดู " + e.Ip + ":" + e.Port + " ได้");
+			return;
+		}
+		watchEntry = e;
+		watchPolling = 0;
+		if (miWatch != null)
+		{
+			miWatch.Text = "■   หยุดเฝ้าดู (" + e.Ip + ":" + e.Port + ")";
+		}
+		if (btnWatch != null)
+		{
+			btnWatch.Text = "■  หยุด (" + e.Ip + ")";
+			btnWatch.SetPalette(Color.FromArgb(180, 40, 50), Color.FromArgb(220, 50, 60));
+			btnWatch.BorderColor = Color.FromArgb(255, 99, 99);
+		}
+		SetStatus("🔔 กำลังเฝ้าดู " + e.Ip + ":" + e.Port + " (Rust Engine) — มีที่ว่างจะแจ้งทันที");
+		watchTimer = new System.Threading.Timer(WatchTick, e, 1000, 1500);
 	}
 
 	private void WatchTick(object state)
 	{
-		ServerEntry e = state as ServerEntry;
-		int result;
-		if (e == null || watchTimer == null || !int.TryParse(e.Port, out result))
-		{
-			return;
-		}
-		QueryResult qr = core.QueryServer(e.Ip, result);
-		if (!qr.Online || qr.Players >= qr.Max)
-		{
-			return;
-		}
-		System.Threading.Timer timer = watchTimer;
-		watchTimer = null;
-		if (timer != null)
-		{
-			timer.Dispose();
-		}
-		if (base.IsDisposed)
+		if (Interlocked.CompareExchange(ref watchPolling, 1, 0) != 0)
 		{
 			return;
 		}
 		try
 		{
-			BeginInvoke((MethodInvoker)delegate
+			ServerEntry e = state as ServerEntry;
+			if (e == null || watchTimer == null || base.IsDisposed)
 			{
-				if (miWatch != null)
+				return;
+			}
+			SlotWatchStatusDto st = core.PollSlotWatch();
+			if (!st.FoundSlot)
+			{
+				if (!st.Watching && watchTimer != null && !base.IsDisposed)
 				{
-					miWatch.Text = "🔔   เฝ้าดูที่ว่าง";
-				}
-				if (btnWatch != null)
-				{
-					btnWatch.Text = "🔔  เฝ้าดูที่ว่าง";
-					btnWatch.SetPalette(colField, colFieldHover);
-					btnWatch.BorderColor = Color.FromArgb(40, 60, 95);
-				}
-				ShowSlotToast(e, qr.Players, qr.Max);
-				CyberAudio.PlayAlert();
-				if (autoJoinSlot)
-				{
-					ForceText(txtIp, e.Ip);
-					ForceText(txtPort, e.Port);
-					if (!string.IsNullOrEmpty(e.Password) && txtServerPass != null)
+					try
 					{
-						ForceText(txtServerPass, e.Password);
+						BeginInvoke((MethodInvoker)delegate
+						{
+							if (!base.IsDisposed)
+							{
+								StopWatch("หยุดเฝ้าดูที่ว่างแล้ว");
+							}
+						});
 					}
-					ShowPage(0);
-					ConnectToServer();
+					catch { }
 				}
-			});
+				return;
+			}
+			System.Threading.Timer timer = watchTimer;
+			watchTimer = null;
+			watchEntry = null;
+			if (timer != null)
+			{
+				timer.Dispose();
+			}
+			try { core.StopSlotWatch(); } catch { }
+			if (base.IsDisposed)
+			{
+				return;
+			}
+			try
+			{
+				BeginInvoke((MethodInvoker)delegate
+				{
+					if (base.IsDisposed) return;
+					e.Players = st.Players;
+					e.Max = st.Max;
+					e.Ping = st.Ping;
+					if (!string.IsNullOrEmpty(st.Name))
+					{
+						e.Name = st.Name;
+					}
+					if (miWatch != null)
+					{
+						miWatch.Text = "🔔   เฝ้าดูที่ว่าง";
+					}
+					if (btnWatch != null)
+					{
+						btnWatch.Text = "🔔  เฝ้าดูที่ว่าง";
+						btnWatch.SetPalette(colField, colFieldHover);
+						btnWatch.BorderColor = Color.FromArgb(40, 60, 95);
+					}
+					ShowSlotToast(e, st.Players, st.Max);
+					CyberAudio.PlayAlert();
+					if (autoJoinSlot)
+					{
+						ForceText(txtIp, e.Ip);
+						ForceText(txtPort, e.Port);
+						if (!string.IsNullOrEmpty(e.Password) && txtServerPass != null)
+						{
+							ForceText(txtServerPass, e.Password);
+						}
+						ShowPage(0);
+						ConnectToServer();
+					}
+				});
+			}
+			catch
+			{
+			}
 		}
 		catch
 		{
+		}
+		finally
+		{
+			Interlocked.Exchange(ref watchPolling, 0);
 		}
 	}
 
@@ -3036,6 +3000,7 @@ internal partial class LauncherForm
 		{
 			timer.Dispose();
 		}
+		try { core.StopSlotWatch(); } catch { }
 		if (miWatch != null)
 		{
 			miWatch.Text = "🔔   เฝ้าดูที่ว่าง";
@@ -3051,13 +3016,10 @@ internal partial class LauncherForm
 
 	private void ShowSlotToast(ServerEntry e, int players, int max)
 	{
-		if (base.WindowState == FormWindowState.Minimized)
-		{
-			base.WindowState = FormWindowState.Normal;
-		}
-		Activate();
+		RestoreFromTrayOrHidden();
 		SetStatus("✅ มีที่ว่างแล้ว! " + e.Ip + ":" + e.Port + " (" + players + "/" + max + ")");
 		ToastForm toastForm = new ToastForm("มีที่ว่างแล้ว!", ((e.Name.Length > 0) ? e.Name : (e.Ip + ":" + e.Port)) + "\n" + e.Ip + ":" + e.Port + "  •  " + players + "/" + max + " คน");
+		toastForm.FormClosed += delegate { toastForm.Dispose(); };
 		toastForm.OnJoin += delegate
 		{
 			ForceText(txtIp, e.Ip);
@@ -3089,6 +3051,8 @@ internal partial class LauncherForm
 		{
 			wt.Dispose();
 		}
+		try { core.StopSlotWatch(); } catch { }
+		try { core.StopWatchdog(); } catch { }
 		if (srvToolTip != null)
 		{
 			srvToolTip.Dispose();

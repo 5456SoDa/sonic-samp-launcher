@@ -20,7 +20,12 @@ internal partial class LauncherForm
 	private RoundedBtn btnSetRestore;
 	private RoundedBtn btnSetFixCrash;
 	private RoundedBtn btnHealthRecheck;
+	private RoundedBtn btnSetTurboShield;
 	private Label lblSetModsBanner;
+	private Label lblHwCpu;
+	private Label lblHwGpu;
+	private Label lblHwRam;
+	private RoundedBtn btnOpenGpuSettings;
 	private Label lblSetSound;
 	private RoundedBtn btnSetTestSound;
 	private Label lblSetDiscord;
@@ -230,7 +235,20 @@ internal partial class LauncherForm
 		lblHealth[4] = AddLbl(pnlSetHealth, "กำลังตรวจสอบ SkyGfx...", fSmall, 340, 52, colSub);
 		lblEngine = AddLbl(pnlSetHealth, "Engine: " + core.EngineName, fSmall, 340, 70, colSub);
 
-		lblSetModsBanner = AddLbl(pnlSetHealth, "ม็อดหลักที่ทำงาน: FramerateVigilante • ModLoader v0.3.10 • CLEO 4.4 • SkyGfx • SilentPatch • 2DFX", fSmall, 14, 88, colSub);
+		lblHwCpu = AddLbl(pnlSetHealth, "⚡ CPU: กำลังตรวจสอบ...", fSmall, 14, 88, colSub);
+		lblHwRam = AddLbl(pnlSetHealth, "💾 RAM: กำลังตรวจสอบ...", fSmall, 340, 88, colSub);
+		lblHwGpu = AddLbl(pnlSetHealth, "🎮 GPU: กำลังตรวจสอบ...", fSmall, 14, 106, colSub);
+
+		btnOpenGpuSettings = MakeMiniBtn("⚡ ตั้งค่า GPU (Windows)", 480, 104, 174, 24);
+		btnOpenGpuSettings.Visible = false;
+		btnOpenGpuSettings.Click += delegate
+		{
+			try { Process.Start(new ProcessStartInfo("ms-settings:display-advancedgraphics") { UseShellExecute = true }); }
+			catch { try { Process.Start("control.exe"); } catch { } }
+		};
+		pnlSetHealth.Controls.Add(btnOpenGpuSettings);
+
+		lblSetModsBanner = AddLbl(pnlSetHealth, "ม็อดหลักที่ทำงาน: FramerateVigilante • ModLoader v0.3.10 • CLEO 4.4 • SkyGfx • SilentPatch • 2DFX", fSmall, 14, 126, colSub);
 
 		swSoundFx = new ToggleSwitch();
 		swSoundFx.Location = new Point(14, 108);
@@ -304,6 +322,14 @@ internal partial class LauncherForm
 		};
 		pnlSetHealth.Controls.Add(swClose);
 		lblSetClose = AddLbl(pnlSetHealth, "🚪  ปิดเมื่อเข้าเกม", fSmall, 309, 142, colSub);
+
+		btnSetTurboShield = MakeMiniBtn("🛡️ ตั้งค่า Shield & ไมค์", 474, 136, 174, 26);
+		btnSetTurboShield.BorderColor = colAccent;
+		btnSetTurboShield.Click += delegate
+		{
+			OpenTurboShieldDialog();
+		};
+		pnlSetHealth.Controls.Add(btnSetTurboShield);
 
 		UpdateSkyGfxButtons();
 		UpdateFpsButtons();
@@ -381,7 +407,7 @@ internal partial class LauncherForm
 
 		// 3. Bottom Card: System Health & Options
 		int healthY = topH + DpiHelper.S(10);
-		int healthH = Math.Max(DpiHelper.S(172), pageH - healthY);
+		int healthH = Math.Max(DpiHelper.S(212), pageH - healthY);
 		pnlSetHealth.Location = new Point(0, healthY);
 		pnlSetHealth.Size = new Size(pageW, healthH);
 
@@ -408,10 +434,19 @@ internal partial class LauncherForm
 			lblHealth[4].Location = new Point(col2X, DpiHelper.S(52));
 		}
 		if (lblEngine != null) lblEngine.Location = new Point(col2X, DpiHelper.S(70));
-		if (lblSetModsBanner != null) lblSetModsBanner.Location = new Point(pad, DpiHelper.S(88));
+		if (lblHwCpu != null) lblHwCpu.Location = new Point(pad, DpiHelper.S(88));
+		if (lblHwRam != null) lblHwRam.Location = new Point(col2X, DpiHelper.S(88));
+		if (lblHwGpu != null) lblHwGpu.Location = new Point(pad, DpiHelper.S(106));
+		if (btnOpenGpuSettings != null)
+		{
+			int gpuBtnW = DpiHelper.S(184);
+			btnOpenGpuSettings.Location = new Point(pageW - pad - gpuBtnW, DpiHelper.S(103));
+			btnOpenGpuSettings.Size = new Size(gpuBtnW, DpiHelper.S(24));
+		}
+		if (lblSetModsBanner != null) lblSetModsBanner.Location = new Point(pad, DpiHelper.S(126));
 
-		int row1Y = DpiHelper.S(108);
-		int row2Y = DpiHelper.S(138);
+		int row1Y = DpiHelper.S(146);
+		int row2Y = DpiHelper.S(176);
 		int swW2 = DpiHelper.S(44);
 		int swH2 = DpiHelper.S(24);
 		int lblOffX = DpiHelper.S(52);
@@ -438,6 +473,11 @@ internal partial class LauncherForm
 		if (lblSetAltTab != null) lblSetAltTab.Location = new Point(colA + lblOffX, row2Y + lblOffY);
 		if (swClose != null) { swClose.Location = new Point(colB, row2Y); swClose.Size = new Size(swW2, swH2); }
 		if (lblSetClose != null) lblSetClose.Location = new Point(colB + lblOffX, row2Y + lblOffY);
+		if (btnSetTurboShield != null)
+		{
+			btnSetTurboShield.Location = new Point(colC, row2Y - DpiHelper.S(2));
+			btnSetTurboShield.Size = new Size(Math.Max(DpiHelper.S(140), pnlSetHealth.Width - colC - DpiHelper.S(16)), DpiHelper.S(26));
+		}
 	}
 
 	private void ApplySkyGfxPreset(string mode)
@@ -628,7 +668,7 @@ internal partial class LauncherForm
 		using (Form dlg = new Form())
 		{
 			dlg.Text = "สร้าง Snapshot สำรองม็อด";
-			dlg.ClientSize = new Size(360, 128);
+			dlg.ClientSize = DpiHelper.Sz(360, 128);
 			dlg.StartPosition = FormStartPosition.CenterParent;
 			dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
 			dlg.MaximizeBox = false;
@@ -658,6 +698,7 @@ internal partial class LauncherForm
 			dlg.CancelButton = cancel;
 			pWrap.Controls.Add(ok);
 			pWrap.Controls.Add(cancel);
+			DpiHelper.ScaleControlTree(dlg);
 			return (dlg.ShowDialog(this) == DialogResult.OK) ? result : null;
 		}
 	}
@@ -667,7 +708,7 @@ internal partial class LauncherForm
 		using (Form dlg = new Form())
 		{
 			dlg.Text = "จัดการ Snapshot ม็อด (Zstd Deduplicated)";
-			dlg.ClientSize = new Size(520, 310);
+			dlg.ClientSize = DpiHelper.Sz(520, 310);
 			dlg.StartPosition = FormStartPosition.CenterParent;
 			dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
 			dlg.MaximizeBox = false;
@@ -745,6 +786,7 @@ internal partial class LauncherForm
 			btnClose.BorderColor = colField;
 			btnClose.Click += delegate { dlg.Close(); };
 			dlg.Controls.Add(btnClose);
+			DpiHelper.ScaleControlTree(dlg);
 
 			dlg.ShowDialog(this);
 		}
@@ -785,6 +827,10 @@ internal partial class LauncherForm
 		{
 			q.AppendLine("• ปลดสถานะ Read-Only: " + string.Join(", ", rep.ReadonlyFiles.ToArray()));
 		}
+		if (rep.NeedsLaa)
+		{
+			q.AppendLine("• เปิดสิทธิ์ 4GB Virtual Memory (Large Address Aware) ให้ gta_sa.exe");
+		}
 		if (MessageBox.Show(this, q.ToString(), "แก้ไขอัตโนมัติ (Auto-fix)", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
 		{
 			return;
@@ -822,6 +868,8 @@ internal partial class LauncherForm
 		ThreadPool.QueueUserWorkItem(delegate
 		{
 			HealthCheckReport rep = core.CheckHealth(g, preset);
+			ShieldDiagnostics diag = null;
+			try { diag = core.GetShieldDiagnostics(g, "", 0); } catch { }
 			try
 			{
 				if (!base.IsDisposed)
@@ -834,6 +882,38 @@ internal partial class LauncherForm
 						SetHealth(2, rep.ModsMsg, HealthColor(rep.ModsStatus, cOk, cWarn, cBad, colSub));
 						SetHealth(3, rep.EnvMsg, HealthColor(rep.EnvStatus, cOk, cWarn, cBad, colSub));
 						SetHealth(4, rep.GfxMsg, HealthColor(rep.GfxStatus, cOk, cWarn, cBad, colSub));
+
+						if (diag != null)
+						{
+							string affText = string.IsNullOrEmpty(diag.CpuAffinity) ? "Auto" : diag.CpuAffinity.ToUpperInvariant();
+							if (lblHwCpu != null)
+							{
+								lblHwCpu.Text = "⚡ CPU: " + diag.LogicalCores + " Threads (" + affText + " Affinity พร้อม)";
+								lblHwCpu.ForeColor = cOk;
+							}
+							if (lblHwRam != null)
+							{
+								lblHwRam.Text = "💾 RAM: " + diag.TotalRamMb + "MB (สตรีมมิ่งอัตโนมัติ " + diag.RecommendedStreamMb + "MB)";
+								lblHwRam.ForeColor = cOk;
+							}
+							if (lblHwGpu != null)
+							{
+								string gpuName = !string.IsNullOrEmpty(diag.DgpuName) ? diag.DgpuName : (!string.IsNullOrEmpty(diag.IgpuName) ? diag.IgpuName : "DirectX 9 GPU");
+								if (diag.IsHybridGpu && !diag.WindowsGpuPref.StartsWith("High"))
+								{
+									lblHwGpu.Text = "⚠️ GPU: " + gpuName + " (ตรวจพบ GPU คู่ แนะนำล็อก dGPU)";
+									lblHwGpu.ForeColor = cWarn;
+									if (btnOpenGpuSettings != null) btnOpenGpuSettings.Visible = true;
+								}
+								else
+								{
+									lblHwGpu.Text = "🎮 GPU: " + gpuName + " (พร้อมทำงานเต็มประสิทธิภาพ)";
+									lblHwGpu.ForeColor = cOk;
+									if (btnOpenGpuSettings != null) btnOpenGpuSettings.Visible = false;
+								}
+							}
+						}
+
 						if (btnAutoFix != null && !btnAutoFix.IsDisposed)
 						{
 							btnAutoFix.Enabled = rep.FixableCount > 0;
@@ -859,28 +939,25 @@ internal partial class LauncherForm
 
 	private void ResetGameSettings()
 	{
-		string docPath = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
-		string setPath = Path.Combine(docPath, "GTA San Andreas User Files", "gta_sa.set");
-		if (!File.Exists(setPath))
+		if (core.IsGameRunning())
 		{
-			Toast("ไม่พบไฟล์ gta_sa.set (ยังไม่มีไฟล์คอนฟิกเดิม)");
+			ShowErr("กรุณาปิด gta_sa.exe ก่อนรีเซ็ต gta_sa.set");
 			return;
 		}
-		if (MessageBox.Show(this, "คุณต้องการรีเซ็ตการตั้งค่าเกมหรือไม่?\r\n\r\nการทำงานนี้จะช่วยแก้ปัญหา:\r\n- เปิดเกมแล้วเด้ง / จอดำ / ค้างหน้าโหลด\r\n- ความละเอียดหน้าจอไม่ถูกต้อง\r\n\r\n(โปรแกรมจะสำรอง gta_sa.set.bak ไว้ และไฟล์เซฟจะไม่สูญหาย)", "ยืนยันการแก้ปัญหาเกมเด้ง", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+		if (MessageBox.Show(this, "คุณต้องการรีเซ็ตการตั้งค่าเกม (gta_sa.set) หรือไม่?\r\n\r\nการทำงานนี้จะช่วยแก้ปัญหา:\r\n- เปิดเกมแล้วเด้ง / จอดำ / ค้างหน้าโหลด\r\n- ความละเอียดหน้าจอไม่ถูกต้อง\r\n\r\n(gta_sa.set จะถูกสร้างใหม่อัตโนมัติเมื่อเปิดเกม ไฟล์เซฟจะไม่สูญหาย)", "ยืนยันการแก้ปัญหาเกมเด้ง", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
 		{
 			return;
 		}
 		try
 		{
-			Process[] procs = Process.GetProcessesByName("gta_sa");
-			foreach (Process p in procs)
+			if (core.ResetGtaSaSet())
 			{
-				try { p.Kill(); } catch { }
+				ToastOk("รีเซ็ต gta_sa.set และแก้ปัญหาเกมเด้งเรียบร้อยแล้ว");
 			}
-			string bakPath = setPath + ".bak";
-			File.Copy(setPath, bakPath, true);
-			File.Delete(setPath);
-			ToastOk("รีเซ็ต gta_sa.set และแก้ปัญหาเกมเด้งเรียบร้อยแล้ว");
+			else
+			{
+				Toast("ไม่พบไฟล์ gta_sa.set (ยังไม่มีไฟล์คอนฟิกเดิม)");
+			}
 		}
 		catch (Exception ex)
 		{
@@ -890,23 +967,19 @@ internal partial class LauncherForm
 
 	private void ApplyNoPauseAltTab(bool enable)
 	{
-		noPauseAltTabEnabled = enable;
-		string g = GetGameDir();
-		string iniPath = Path.Combine(g, "scripts", "GTASA.WidescreenFix.ini");
 		try
 		{
-			if (File.Exists(iniPath))
+			string err = core.SetAltTabNoPause(GetGameDir(), enable);
+			if (!string.IsNullOrEmpty(err))
 			{
-				string[] lines = File.ReadAllLines(iniPath, Encoding.UTF8);
-				for (int i = 0; i < lines.Length; i++)
+				if (swNoPauseAltTab != null)
 				{
-					if (lines[i].TrimStart().StartsWith("AllowAltTabbingWithoutPausing", StringComparison.OrdinalIgnoreCase))
-					{
-						lines[i] = "AllowAltTabbingWithoutPausing = " + (enable ? "1" : "0");
-					}
+					swNoPauseAltTab.SetCheckedSilent(noPauseAltTabEnabled);
 				}
-				File.WriteAllLines(iniPath, lines, Encoding.UTF8);
+				ShowErr("ไม่สามารถบันทึกการตั้งค่า Alt+Tab: " + err);
+				return;
 			}
+			noPauseAltTabEnabled = enable;
 			SaveConfig();
 			if (enable)
 			{
@@ -919,204 +992,87 @@ internal partial class LauncherForm
 		}
 		catch (Exception ex)
 		{
+			if (swNoPauseAltTab != null)
+			{
+				swNoPauseAltTab.SetCheckedSilent(noPauseAltTabEnabled);
+			}
 			ShowErr("ไม่สามารถบันทึกการตั้งค่า Alt+Tab: " + ex.Message);
 		}
 	}
 
 	private void LoadConfig()
 	{
-		string text = "";
-		string text2 = "";
-		string text3 = "";
-		string text4 = "";
-		string text5 = "";
-		string text6 = "";
-		string text7 = "";
-		bool @checked = false;
-		bool checked2 = false;
-		List<string> list = new List<string>();
-		List<string> list2 = new List<string>();
-		try
+		LoadPlaytime();
+		LauncherSettingsDto cfg = core.LoadSettings(cfgPath);
+		string gameDir = (!string.IsNullOrEmpty(cfg.GamePath)) ? cfg.GamePath : AppDomain.CurrentDomain.BaseDirectory;
+		ForceText(txtPath, gameDir);
+		if (!string.IsNullOrEmpty(cfg.RconIp))
 		{
-			if (File.Exists(cfgPath))
+			ForceText(txtRconIp, cfg.RconIp);
+		}
+		if (!string.IsNullOrEmpty(cfg.RconPort))
+		{
+			ForceText(txtRconPort, cfg.RconPort);
+		}
+		if (!string.IsNullOrEmpty(cfg.RconPass))
+		{
+			ForceText(txtRconPass, cfg.RconPass);
+		}
+
+		sortCol = (cfg.SortCol >= 0 && cfg.SortCol <= 3) ? cfg.SortCol : 0;
+		sortDesc = cfg.SortDesc;
+		activeSkyGfx = string.IsNullOrEmpty(cfg.SkyGfxPreset) ? "ps2" : cfg.SkyGfxPreset;
+		activeFpsLimit = cfg.FpsLimit;
+		autoJoinSlot = cfg.AutoJoinSlot;
+		soundFxEnabled = cfg.SoundFx;
+		discordRpcEnabled = cfg.DiscordRpc;
+		if (!string.IsNullOrEmpty(cfg.DiscordAppId))
+		{
+			discordClientId = cfg.DiscordAppId;
+		}
+		noPauseAltTabEnabled = cfg.NoPauseAltTab;
+
+		nickProfiles.Clear();
+		if (cfg.NickProfiles != null)
+		{
+			foreach (string rawProf in cfg.NickProfiles)
 			{
-				string[] array = File.ReadAllLines(cfgPath, Encoding.UTF8);
-				foreach (string text8 in array)
+				string np = (rawProf ?? "").Trim();
+				if (np.Length > 0 && !nickProfiles.Contains(np))
 				{
-					if (text8.StartsWith("nick=", StringComparison.OrdinalIgnoreCase))
-					{
-						text = text8.Substring(5);
-					}
-					else if (text8.StartsWith("accent=", StringComparison.OrdinalIgnoreCase))
-					{
-						text2 = text8.Substring(7);
-					}
-					else if (text8.StartsWith("gamepath=", StringComparison.OrdinalIgnoreCase))
-					{
-						text3 = text8.Substring(9);
-					}
-					else if (text8.StartsWith("autoc=", StringComparison.OrdinalIgnoreCase))
-					{
-						@checked = text8.Substring(6) == "1";
-					}
-					else if (text8.StartsWith("closeafter=", StringComparison.OrdinalIgnoreCase))
-					{
-						checked2 = text8.Substring(11) == "1";
-					}
-					else if (text8.StartsWith("last=", StringComparison.OrdinalIgnoreCase))
-					{
-						text4 = text8.Substring(5);
-					}
-					else if (text8.StartsWith("rconip=", StringComparison.OrdinalIgnoreCase))
-					{
-						text5 = text8.Substring(7);
-					}
-					else if (text8.StartsWith("rconport=", StringComparison.OrdinalIgnoreCase))
-					{
-						text6 = text8.Substring(9);
-					}
-					else if (text8.StartsWith("rconpass=", StringComparison.OrdinalIgnoreCase))
-					{
-						text7 = text8.Substring(9);
-					}
-					else if (text8.StartsWith("sortcol=", StringComparison.OrdinalIgnoreCase))
-					{
-						int result;
-						if (int.TryParse(text8.Substring(8), out result) && result >= 0 && result <= 4)
-						{
-							sortCol = result;
-						}
-					}
-					else if (text8.StartsWith("sortdesc=", StringComparison.OrdinalIgnoreCase))
-					{
-						sortDesc = text8.Substring(9) == "1";
-					}
-					else if (text8.StartsWith("srv=", StringComparison.OrdinalIgnoreCase))
-					{
-						list.Add(text8.Substring(4));
-					}
-					else if (text8.StartsWith("hist=", StringComparison.OrdinalIgnoreCase))
-					{
-						list2.Add(text8.Substring(5));
-					}
-					else if (text8.StartsWith("nick_prof=", StringComparison.OrdinalIgnoreCase))
-					{
-						string np = text8.Substring(10).Trim();
-						if (np.Length > 0 && !nickProfiles.Contains(np))
-						{
-							nickProfiles.Add(np);
-						}
-					}
-					else if (text8.StartsWith("skygfx_preset=", StringComparison.OrdinalIgnoreCase))
-					{
-						activeSkyGfx = text8.Substring(14).Trim();
-					}
-					else if (text8.StartsWith("fps_limit=", StringComparison.OrdinalIgnoreCase))
-					{
-						int parsedFps;
-						if (int.TryParse(text8.Substring(10).Trim(), out parsedFps))
-						{
-							activeFpsLimit = parsedFps;
-						}
-					}
-					else if (text8.StartsWith("autoslot=", StringComparison.OrdinalIgnoreCase))
-					{
-						autoJoinSlot = (text8.Substring(9).Trim() == "1");
-					}
-					else if (text8.StartsWith("sound_fx=", StringComparison.OrdinalIgnoreCase))
-					{
-						soundFxEnabled = (text8.Substring(9).Trim() == "1");
-					}
-					else if (text8.StartsWith("discord_rpc=", StringComparison.OrdinalIgnoreCase))
-					{
-						discordRpcEnabled = (text8.Substring(12).Trim() == "1");
-					}
-					else if (text8.StartsWith("discord_app_id=", StringComparison.OrdinalIgnoreCase))
-					{
-						string cid = text8.Substring(15).Trim();
-						if (!string.IsNullOrEmpty(cid))
-						{
-							discordClientId = cid;
-						}
-					}
-					else if (text8.StartsWith("nopause_alttab=", StringComparison.OrdinalIgnoreCase))
-					{
-						noPauseAltTabEnabled = (text8.Substring(15).Trim() == "1");
-					}
+					nickProfiles.Add(np);
 				}
 			}
 		}
-		catch
-		{
-		}
-		if (text3.Length > 0)
-		{
-			ForceText(txtPath, text3);
-		}
-		else
-		{
-			ForceText(txtPath, AppDomain.CurrentDomain.BaseDirectory);
-		}
-		if (text5.Length > 0)
-		{
-			ForceText(txtRconIp, text5);
-		}
-		if (text6.Length > 0)
-		{
-			ForceText(txtRconPort, text6);
-		}
-		if (text7.Length > 0)
-		{
-			ForceText(txtRconPass, text7);
-		}
-		swAuto.Checked = @checked;
-		swClose.Checked = checked2;
+
+		swAuto.SetCheckedSilent(cfg.AutoConnect);
+		swClose.SetCheckedSilent(cfg.CloseAfterLaunch);
 		if (swAutoSlot != null)
 		{
-			swAutoSlot.Checked = autoJoinSlot;
+			swAutoSlot.SetCheckedSilent(autoJoinSlot);
 		}
 		if (swSoundFx != null)
 		{
-			swSoundFx.Checked = soundFxEnabled;
+			swSoundFx.SetCheckedSilent(soundFxEnabled);
 		}
 		CyberAudio.Enabled = soundFxEnabled;
 		if (swDiscordRpc != null)
 		{
-			swDiscordRpc.Checked = discordRpcEnabled;
+			swDiscordRpc.SetCheckedSilent(discordRpcEnabled);
 		}
 		DiscordRpc.Enabled = discordRpcEnabled;
 		DiscordRpc.ClientId = discordClientId;
 		if (swNoPauseAltTab != null)
 		{
-			string gDir = (text3.Length > 0 && Directory.Exists(text3)) ? text3 : AppDomain.CurrentDomain.BaseDirectory;
-			string wsIni = Path.Combine(gDir, "scripts", "GTASA.WidescreenFix.ini");
-			if (File.Exists(wsIni))
-			{
-				try
-				{
-					string[] wsLines = File.ReadAllLines(wsIni, Encoding.UTF8);
-					foreach (string wsL in wsLines)
-					{
-						if (wsL.TrimStart().StartsWith("AllowAltTabbingWithoutPausing", StringComparison.OrdinalIgnoreCase))
-						{
-							string[] parts = wsL.Split('=');
-							if (parts.Length > 1)
-							{
-								noPauseAltTabEnabled = parts[1].Trim().StartsWith("1");
-							}
-							break;
-						}
-					}
-				}
-				catch { }
-			}
-			swNoPauseAltTab.Checked = noPauseAltTabEnabled;
+			swNoPauseAltTab.SetCheckedSilent(noPauseAltTabEnabled);
 		}
+
 		UpdateSkyGfxButtons();
 		UpdateFpsButtons();
-		if (text2.Length > 0)
+
+		if (!string.IsNullOrEmpty(cfg.Accent))
 		{
-			string[] array2 = text2.Split(',');
+			string[] array2 = cfg.Accent.Split(',');
 			if (array2.Length == 3)
 			{
 				try
@@ -1128,55 +1084,61 @@ internal partial class LauncherForm
 				}
 			}
 		}
-		foreach (string item in list)
+
+		favs.Clear();
+		hist.Clear();
+		HashSet<string> favKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		try
 		{
-			string[] array3 = item.Split(new char[1] { '|' }, 3);
-			if (array3.Length >= 2 && array3[0].Length > 0 && array3[1].Length > 0)
+			List<SavedServerDto> dbFavs = core.ListFavorites();
+			foreach (SavedServerDto sf in dbFavs)
 			{
-				ServerEntry serverEntry = new ServerEntry();
-				serverEntry.Ip = array3[0];
-				serverEntry.Port = array3[1];
-				serverEntry.Fav = true;
-				if (array3.Length >= 3 && array3[2].Trim().Length > 0)
+				if (sf != null && !string.IsNullOrEmpty(sf.Ip) && !string.IsNullOrEmpty(sf.Port))
 				{
-					serverEntry.Name = array3[2].Trim();
+					ServerEntry se = new ServerEntry();
+					se.Ip = sf.Ip;
+					se.Port = sf.Port;
+					se.Name = sf.Name ?? "";
+					se.Fav = true;
+					favs.Add(se);
+					favKeys.Add(sf.Ip + "|" + sf.Port);
 				}
-				favs.Add(serverEntry);
+			}
+			List<SavedServerDto> dbHist = core.ListHistory(30);
+			foreach (SavedServerDto sh in dbHist)
+			{
+				if (sh != null && !string.IsNullOrEmpty(sh.Ip) && !string.IsNullOrEmpty(sh.Port))
+				{
+					string k = sh.Ip + "|" + sh.Port;
+					if (!favKeys.Contains(k))
+					{
+						ServerEntry se = new ServerEntry();
+						se.Ip = sh.Ip;
+						se.Port = sh.Port;
+						se.Name = sh.Name ?? "";
+						se.Fav = false;
+						hist.Add(se);
+					}
+				}
 			}
 		}
-		foreach (string item2 in list2)
+		catch
 		{
-			string[] array4 = item2.Split(new char[1] { '|' }, 3);
-			if (array4.Length >= 2 && array4[0].Length > 0 && array4[1].Length > 0)
-			{
-				ServerEntry serverEntry2 = new ServerEntry();
-				serverEntry2.Ip = array4[0];
-				serverEntry2.Port = array4[1];
-				serverEntry2.Fav = false;
-				if (array4.Length >= 3 && array4[2].Trim().Length > 0)
-				{
-					serverEntry2.Name = array4[2].Trim();
-				}
-				hist.Add(serverEntry2);
-			}
 		}
+
 		RebuildList();
-		if (text.Length > 0)
+		if (!string.IsNullOrEmpty(cfg.Nick))
 		{
-			ForceText(txtNick, text);
+			ForceText(txtNick, cfg.Nick);
 		}
 		else
 		{
 			ForceText(txtNick, RandomNick());
 		}
-		if (text4.Length > 0)
+		if (!string.IsNullOrEmpty(cfg.LastIp) && !string.IsNullOrEmpty(cfg.LastPort))
 		{
-			string[] array5 = text4.Split('|');
-			if (array5.Length >= 2)
-			{
-				ForceText(txtIp, array5[0]);
-				ForceText(txtPort, array5[1]);
-			}
+			ForceText(txtIp, cfg.LastIp);
+			ForceText(txtPort, cfg.LastPort);
 		}
 		else
 		{
@@ -1186,7 +1148,6 @@ internal partial class LauncherForm
 		SetStatus("โหลดการตั้งค่าเรียบร้อย");
 		cfgReady = true;
 		RebuildChips();
-		LoadPlaytime();
 		RenderBg();
 	}
 
@@ -1212,81 +1173,33 @@ internal partial class LauncherForm
 	{
 		try
 		{
-			StringBuilder stringBuilder = new StringBuilder();
-			string text = FieldVal(txtNick);
-			if (text.Length > 0)
+			LauncherSettingsDto dto = new LauncherSettingsDto();
+			dto.Nick = FieldVal(txtNick);
+			dto.Accent = colAccent.R + "," + colAccent.G + "," + colAccent.B;
+			dto.GamePath = FieldVal(txtPath);
+			dto.AutoConnect = swAuto.Checked;
+			dto.CloseAfterLaunch = swClose.Checked;
+			dto.LastIp = FieldVal(txtIp);
+			dto.LastPort = FieldVal(txtPort);
+			dto.RconIp = FieldVal(txtRconIp);
+			dto.RconPort = FieldVal(txtRconPort);
+			dto.RconPass = FieldVal(txtRconPass);
+			dto.SortCol = sortCol;
+			dto.SortDesc = sortDesc;
+			dto.SkyGfxPreset = activeSkyGfx ?? "ps2";
+			dto.FpsLimit = activeFpsLimit;
+			dto.AutoJoinSlot = autoJoinSlot;
+			dto.SoundFx = soundFxEnabled;
+			dto.DiscordRpc = discordRpcEnabled;
+			dto.DiscordAppId = discordClientId ?? "";
+			dto.NoPauseAltTab = noPauseAltTabEnabled;
+			dto.NickProfiles = new List<string>(nickProfiles);
+
+			string err = core.SaveSettings(cfgPath, dto);
+			if (!string.IsNullOrEmpty(err))
 			{
-				stringBuilder.Append("nick=").Append(text).Append("\r\n");
+				SetStatus("บันทึกการตั้งค่าไม่สำเร็จ: " + err);
 			}
-			stringBuilder.Append("accent=").Append(colAccent.R).Append(',')
-				.Append(colAccent.G)
-				.Append(',')
-				.Append(colAccent.B)
-				.Append("\r\n");
-			string text2 = FieldVal(txtPath);
-			if (text2.Length > 0)
-			{
-				stringBuilder.Append("gamepath=").Append(text2).Append("\r\n");
-			}
-			stringBuilder.Append("autoc=").Append(swAuto.Checked ? "1" : "0").Append("\r\n");
-			stringBuilder.Append("closeafter=").Append(swClose.Checked ? "1" : "0").Append("\r\n");
-			string text3 = FieldVal(txtIp);
-			string text4 = FieldVal(txtPort);
-			if (text3.Length > 0 && text4.Length > 0)
-			{
-				stringBuilder.Append("last=").Append(text3).Append('|')
-					.Append(text4)
-					.Append("\r\n");
-			}
-			string text5 = FieldVal(txtRconIp);
-			string text6 = FieldVal(txtRconPort);
-			string text7 = FieldVal(txtRconPass);
-			if (text5.Length > 0)
-			{
-				stringBuilder.Append("rconip=").Append(text5).Append("\r\n");
-			}
-			if (text6.Length > 0)
-			{
-				stringBuilder.Append("rconport=").Append(text6).Append("\r\n");
-			}
-			if (text7.Length > 0)
-			{
-				stringBuilder.Append("rconpass=").Append(text7).Append("\r\n");
-			}
-			stringBuilder.Append("sortcol=").Append(sortCol).Append("\r\n");
-			stringBuilder.Append("sortdesc=").Append(sortDesc ? "1" : "0").Append("\r\n");
-			foreach (ServerEntry fav in favs)
-			{
-				stringBuilder.Append("srv=").Append(fav.Ip).Append('|').Append(fav.Port);
-				string safeName = (fav.Name ?? "").Replace("|", " ").Replace("\r", "").Replace("\n", "").Trim();
-				if (safeName.Length > 0)
-				{
-					stringBuilder.Append('|').Append(safeName);
-				}
-				stringBuilder.Append("\r\n");
-			}
-			foreach (ServerEntry item in hist)
-			{
-				stringBuilder.Append("hist=").Append(item.Ip).Append('|').Append(item.Port);
-				string safeName = (item.Name ?? "").Replace("|", " ").Replace("\r", "").Replace("\n", "").Trim();
-				if (safeName.Length > 0)
-				{
-					stringBuilder.Append('|').Append(safeName);
-				}
-				stringBuilder.Append("\r\n");
-			}
-			stringBuilder.Append("skygfx_preset=").Append(activeSkyGfx).Append("\r\n");
-			stringBuilder.Append("fps_limit=").Append(activeFpsLimit).Append("\r\n");
-			stringBuilder.Append("autoslot=").Append(autoJoinSlot ? "1" : "0").Append("\r\n");
-			stringBuilder.Append("sound_fx=").Append(soundFxEnabled ? "1" : "0").Append("\r\n");
-			stringBuilder.Append("discord_rpc=").Append(discordRpcEnabled ? "1" : "0").Append("\r\n");
-			stringBuilder.Append("discord_app_id=").Append(discordClientId).Append("\r\n");
-			stringBuilder.Append("nopause_alttab=").Append(noPauseAltTabEnabled ? "1" : "0").Append("\r\n");
-			foreach (string prof in nickProfiles)
-			{
-				stringBuilder.Append("nick_prof=").Append(prof).Append("\r\n");
-			}
-			File.WriteAllText(cfgPath, stringBuilder.ToString(), Encoding.UTF8);
 		}
 		catch
 		{

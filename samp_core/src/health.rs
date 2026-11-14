@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HealthReport {
@@ -21,6 +23,7 @@ pub struct HealthReport {
     pub readonly_files: Vec<String>,
     pub in_program_files: bool,
     pub missing_dx9: bool,
+    pub needs_laa: bool,
     pub fixable_count: usize,
 }
 
@@ -66,6 +69,39 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(hex)
 }
 
+fn sha256_file_cached(path: &Path) -> std::io::Result<String> {
+    static CACHE: OnceLock<Mutex<HashMap<String, (u64, u128, String)>>> = OnceLock::new();
+    let meta = fs::metadata(path)?;
+    let len = meta.len();
+    let mtime_nanos = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let key = path.to_string_lossy().to_ascii_lowercase();
+    let store = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if mtime_nanos > 0 {
+        if let Ok(guard) = store.lock() {
+            if let Some((clen, cmtime, chex)) = guard.get(&key) {
+                if *clen == len && *cmtime == mtime_nanos {
+                    return Ok(chex.clone());
+                }
+            }
+        }
+    }
+    let hex = sha256_file(path)?;
+    if mtime_nanos > 0 {
+        if let Ok(mut guard) = store.lock() {
+            if guard.len() >= 8 {
+                guard.clear();
+            }
+            guard.insert(key, (len, mtime_nanos, hex.clone()));
+        }
+    }
+    Ok(hex)
+}
+
 fn collect_files_limited(dir: &Path, max_depth: usize, out: &mut Vec<PathBuf>) {
     if max_depth == 0 || !dir.is_dir() {
         return;
@@ -107,12 +143,33 @@ fn detect_dx9_missing() -> bool {
 }
 
 fn find_duplicate_asis(game_dir: &Path) -> Vec<String> {
+    let (ml_ignore_all, ml_ignored) = crate::modloader_cfg::ignored_mod_folders(game_dir);
     let mut scan_roots = vec![
         (game_dir.to_path_buf(), 1usize),
         (game_dir.join("scripts"), 2usize),
         (game_dir.join("CLEO"), 2usize),
-        (game_dir.join("modloader"), 3usize),
     ];
+    let ml_dir = game_dir.join("modloader");
+    if !ml_ignore_all && ml_dir.is_dir() {
+        if let Ok(rd) = fs::read_dir(&ml_dir) {
+            let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+            dirs.sort();
+            for p in dirs {
+                if !p.is_dir() {
+                    continue;
+                }
+                let name = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_ascii_lowercase())
+                    .unwrap_or_default();
+                if name.starts_with('.') || name == "_ignore" || ml_ignored.contains(&name) {
+                    continue;
+                }
+                scan_roots.push((p, 2usize));
+            }
+        }
+    }
     let mut all_files = Vec::new();
     for (dir, depth) in scan_roots.drain(..) {
         collect_files_limited(&dir, depth, &mut all_files);
@@ -181,7 +238,7 @@ pub fn check_health(game_dir: &Path, skygfx_preset: &str) -> HealthReport {
         )
     } else {
         let len = fs::metadata(&gta_exe).map(|m| m.len()).unwrap_or(0);
-        let hash_ok = sha256_file(&gta_exe)
+        let hash_ok = sha256_file_cached(&gta_exe)
             .map(|h| {
                 h == "f01a00ce950fa40ca1ed59df0e789848c6edcf6405456274965885d0929343ac"
             })
@@ -292,9 +349,7 @@ pub fn check_health(game_dir: &Path, skygfx_preset: &str) -> HealthReport {
     // 4. SkyGfx & overall status
     let sky_active = game_dir.join("skygfx.ini").exists()
         && (game_dir.join("skygfx.asi").exists()
-            || game_dir.join("scripts").join("skygfx.asi").exists()
-            || (!game_dir.join("skygfx.asi.disabled").exists()
-                && !game_dir.join("scripts").join("skygfx.asi.disabled").exists()));
+            || game_dir.join("scripts").join("skygfx.asi").exists());
     let needs_laa = matches!(check_pe_laa(&gta_exe), Some(false));
     let fixable_count = duplicate_asis.len() + readonly_files.len() + usize::from(needs_laa);
     let (gfx_status, gfx_msg) = if fixable_count > 0 {
@@ -326,14 +381,16 @@ pub fn check_health(game_dir: &Path, skygfx_preset: &str) -> HealthReport {
         readonly_files,
         in_program_files,
         missing_dx9,
+        needs_laa,
         fixable_count,
     }
 }
 
 const IMAGE_FILE_LARGE_ADDRESS_AWARE: u16 = 0x0020;
+const IMAGE_NT_OPTIONAL_HDR32_MAGIC: u16 = 0x010B;
 
-/// Inspects a PE binary's COFF Characteristics for IMAGE_FILE_LARGE_ADDRESS_AWARE.
-/// Returns `None` if the file does not exist or is not a valid PE header.
+/// Inspects a PE32 binary's COFF Characteristics for IMAGE_FILE_LARGE_ADDRESS_AWARE.
+/// Returns `None` if the file does not exist or is not a valid 32-bit PE32 header.
 pub fn check_pe_laa(exe_path: &Path) -> Option<bool> {
     let mut f = File::open(exe_path).ok()?;
     let mut hdr = [0u8; 4096];
@@ -342,7 +399,12 @@ pub fn check_pe_laa(exe_path: &Path) -> Option<bool> {
         return None;
     }
     let e_lfanew = u32::from_le_bytes([hdr[0x3C], hdr[0x3D], hdr[0x3E], hdr[0x3F]]) as usize;
-    if e_lfanew + 24 > n || &hdr[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
+    let end = e_lfanew.checked_add(26)?;
+    if end > n || &hdr[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
+        return None;
+    }
+    let opt_magic = u16::from_le_bytes([hdr[e_lfanew + 24], hdr[e_lfanew + 25]]);
+    if opt_magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC {
         return None;
     }
     let chars = u16::from_le_bytes([hdr[e_lfanew + 22], hdr[e_lfanew + 23]]);
@@ -350,7 +412,7 @@ pub fn check_pe_laa(exe_path: &Path) -> Option<bool> {
 }
 
 /// Sets the IMAGE_FILE_LARGE_ADDRESS_AWARE (4GB virtual memory) bit on a 32-bit PE header.
-/// Returns `Ok(true)` if modified, `Ok(false)` if already enabled or not a PE file.
+/// Returns `Ok(true)` if modified, `Ok(false)` if already enabled or not a PE32 file.
 pub fn enable_pe_laa(exe_path: &Path) -> Result<bool, String> {
     let Some(enabled) = check_pe_laa(exe_path) else {
         return Ok(false);
@@ -374,13 +436,16 @@ pub fn enable_pe_laa(exe_path: &Path) -> Result<bool, String> {
     f.read_exact(&mut dos)
         .map_err(|e| format!("อ่าน DOS header ล้มเหลว: {}", e))?;
     let e_lfanew = u32::from_le_bytes([dos[0x3C], dos[0x3D], dos[0x3E], dos[0x3F]]) as u64;
-    f.seek(SeekFrom::Start(e_lfanew + 22))
+    let chars_off = e_lfanew
+        .checked_add(22)
+        .ok_or_else(|| "PE header offset ไม่ถูกต้อง".to_string())?;
+    f.seek(SeekFrom::Start(chars_off))
         .map_err(|e| format!("Seek PE Characteristics ล้มเหลว: {}", e))?;
     let mut cbuf = [0u8; 2];
     f.read_exact(&mut cbuf)
         .map_err(|e| format!("อ่าน PE Characteristics ล้มเหลว: {}", e))?;
     let updated = u16::from_le_bytes(cbuf) | IMAGE_FILE_LARGE_ADDRESS_AWARE;
-    f.seek(SeekFrom::Start(e_lfanew + 22))
+    f.seek(SeekFrom::Start(chars_off))
         .map_err(|e| format!("Seek PE write ล้มเหลว: {}", e))?;
     f.write_all(&updated.to_le_bytes())
         .map_err(|e| format!("บันทึก PE Characteristics ล้มเหลว: {}", e))?;
@@ -388,7 +453,14 @@ pub fn enable_pe_laa(exe_path: &Path) -> Result<bool, String> {
 }
 
 /// Updates INI keys case-insensitively while preserving sections, blank lines, and comments.
-fn update_ini_keys(path: &Path, updates: &[(&str, &str)], spaced_equals: bool) -> Result<bool, String> {
+/// When `target_section` is `Some(sec)`, only keys inside `[sec]` are updated and missing keys
+/// are inserted at the end of `[sec]` (or created under a new `[sec]` section).
+pub(crate) fn update_ini_keys(
+    path: &Path,
+    updates: &[(&str, &str)],
+    spaced_equals: bool,
+    target_section: Option<&str>,
+) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
@@ -400,22 +472,49 @@ fn update_ini_keys(path: &Path, updates: &[(&str, &str)], spaced_equals: bool) -
         }
     }
     let raw = fs::read_to_string(path).map_err(|e| format!("อ่าน {} ล้มเหลว: {}", path.display(), e))?;
-    let line_sep = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let has_bom = raw.starts_with('\u{feff}');
+    let clean_raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    let line_sep = if clean_raw.contains("\r\n") { "\r\n" } else { "\n" };
     let mut out_lines: Vec<String> = Vec::new();
     let mut applied: HashSet<String> = HashSet::new();
-    let mut changed = false;
+    let mut changed = has_bom;
+    let mut current_section: Option<String> = None;
+    let mut target_sec_insert_idx: Option<usize> = None;
 
-    for orig in raw.lines() {
+    for orig in clean_raw.lines() {
         let trimmed = orig.trim();
-        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') || trimmed.starts_with('[') {
+        if trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.len() >= 2 {
+            let sec_name = trimmed[1..trimmed.len() - 1].trim().to_string();
+            current_section = Some(sec_name.clone());
             out_lines.push(orig.to_string());
+            if let Some(ts) = target_section {
+                if sec_name.eq_ignore_ascii_case(ts) {
+                    target_sec_insert_idx = Some(out_lines.len());
+                }
+            }
+            continue;
+        }
+        let in_scope = match target_section {
+            Some(ts) => current_section
+                .as_deref()
+                .map_or(false, |s| s.eq_ignore_ascii_case(ts)),
+            None => true,
+        };
+        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') || !in_scope {
+            out_lines.push(orig.to_string());
+            if in_scope && !trimmed.is_empty() {
+                target_sec_insert_idx = Some(out_lines.len());
+            }
             continue;
         }
         if let Some(eq_idx) = orig.find('=') {
             let key_raw = orig[..eq_idx].trim();
             if let Some((_, new_val)) = updates.iter().find(|(k, _)| k.eq_ignore_ascii_case(key_raw)) {
                 let after_eq = &orig[eq_idx + 1..];
-                let comment_suffix = after_eq.find(';').map(|ci| format!("  {}", after_eq[ci..].trim())).unwrap_or_default();
+                let comment_suffix = after_eq
+                    .find(';')
+                    .map(|ci| format!("  {}", after_eq[ci..].trim()))
+                    .unwrap_or_default();
                 let sep = if spaced_equals { " = " } else { "=" };
                 let replacement = format!("{}{}{}{}", key_raw, sep, new_val, comment_suffix);
                 if replacement != orig {
@@ -423,17 +522,47 @@ fn update_ini_keys(path: &Path, updates: &[(&str, &str)], spaced_equals: bool) -
                 }
                 out_lines.push(replacement);
                 applied.insert(key_raw.to_ascii_lowercase());
+                if target_section.is_some() {
+                    target_sec_insert_idx = Some(out_lines.len());
+                }
                 continue;
             }
         }
         out_lines.push(orig.to_string());
+        if target_section.is_some() {
+            target_sec_insert_idx = Some(out_lines.len());
+        }
     }
 
-    for (k, v) in updates {
-        if !applied.contains(&k.to_ascii_lowercase()) {
-            let sep = if spaced_equals { " = " } else { "=" };
-            out_lines.push(format!("{}{}{}", k, sep, v));
-            changed = true;
+    let missing: Vec<(&str, &str)> = updates
+        .iter()
+        .copied()
+        .filter(|(k, _)| !applied.contains(&k.to_ascii_lowercase()))
+        .collect();
+    if !missing.is_empty() {
+        let sep = if spaced_equals { " = " } else { "=" };
+        if let Some(ts) = target_section {
+            if let Some(mut idx) = target_sec_insert_idx {
+                for (k, v) in missing {
+                    out_lines.insert(idx, format!("{}{}{}", k, sep, v));
+                    idx += 1;
+                    changed = true;
+                }
+            } else {
+                if !out_lines.is_empty() && !out_lines.last().map_or(true, |l| l.trim().is_empty()) {
+                    out_lines.push(String::new());
+                }
+                out_lines.push(format!("[{}]", ts));
+                for (k, v) in missing {
+                    out_lines.push(format!("{}{}{}", k, sep, v));
+                }
+                changed = true;
+            }
+        } else {
+            for (k, v) in missing {
+                out_lines.push(format!("{}{}{}", k, sep, v));
+                changed = true;
+            }
         }
     }
 
@@ -444,12 +573,13 @@ fn update_ini_keys(path: &Path, updates: &[(&str, &str)], spaced_equals: bool) -
     Ok(changed)
 }
 
-fn sanitize_stream_ini(path: &Path) -> Result<bool, String> {
+fn sanitize_stream_ini(path: &Path, target_kb: u32) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
     let raw = fs::read_to_string(path).map_err(|e| format!("อ่าน stream.ini ล้มเหลว: {}", e))?;
     let line_sep = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let target_str = target_kb.to_string();
     let mut out: Vec<String> = Vec::new();
     let mut changed = false;
     let mut saw_mem = false;
@@ -460,15 +590,15 @@ fn sanitize_stream_ini(path: &Path) -> Result<bool, String> {
         if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
             if k.eq_ignore_ascii_case("memory") {
                 saw_mem = true;
-                if v != "1048576" {
-                    out.push("memory\t\t1048576".to_string());
+                if v != target_str {
+                    out.push(format!("memory\t\t{}", target_str));
                     changed = true;
                     continue;
                 }
             } else if k.eq_ignore_ascii_case("devkit_memory") {
                 saw_dev = true;
-                if v != "1048576" {
-                    out.push("devkit_memory\t1048576".to_string());
+                if v != target_str {
+                    out.push(format!("devkit_memory\t{}", target_str));
                     changed = true;
                     continue;
                 }
@@ -477,11 +607,11 @@ fn sanitize_stream_ini(path: &Path) -> Result<bool, String> {
         out.push(orig.to_string());
     }
     if !saw_mem {
-        out.push("memory\t\t1048576".to_string());
+        out.push(format!("memory\t\t{}", target_str));
         changed = true;
     }
     if !saw_dev {
-        out.push("devkit_memory\t1048576".to_string());
+        out.push(format!("devkit_memory\t{}", target_str));
         changed = true;
     }
     if changed {
@@ -489,6 +619,58 @@ fn sanitize_stream_ini(path: &Path) -> Result<bool, String> {
         fs::write(path, body).map_err(|e| format!("เขียน stream.ini ล้มเหลว: {}", e))?;
     }
     Ok(changed)
+}
+
+/// Applies stream.ini and III.VC.SA.LimitAdjuster.ini memory budgets matching real available RAM
+/// and the user's ResourceMode setting in SonicGuard.ini.
+pub fn apply_adaptive_memory_budget_for_avail(
+    game_dir: &Path,
+    avail_phys_mb: u64,
+    mode: crate::resources::ResourceMode,
+) -> usize {
+    let (target_kb, target_mb) =
+        crate::resources::compute_adaptive_stream_budget_kb(avail_phys_mb, mode);
+    let mut count = 0usize;
+
+    let limit_ini = game_dir.join("III.VC.SA.LimitAdjuster.ini");
+    if limit_ini.exists() {
+        if let Ok(raw) = fs::read_to_string(&limit_ini) {
+            let needs_update = raw.lines().any(|line| {
+                let t = line.trim();
+                if t.is_empty() || t.starts_with(';') || t.starts_with('#') {
+                    return false;
+                }
+                if let Some((k, v)) = t.split_once('=') {
+                    if k.trim().eq_ignore_ascii_case("MemoryAvailable") {
+                        let vt = v.split(';').next().unwrap_or(v).trim();
+                        return vt.eq_ignore_ascii_case("50%")
+                            || vt.parse::<u32>().map(|n| n != target_mb).unwrap_or(false);
+                    }
+                }
+                false
+            });
+            if needs_update {
+                let mb_str = target_mb.to_string();
+                if update_ini_keys(&limit_ini, &[("MemoryAvailable", &mb_str)], true, None)
+                    .unwrap_or(false)
+                {
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    if sanitize_stream_ini(&game_dir.join("stream.ini"), target_kb).unwrap_or(false) {
+        count += 1;
+    }
+    count
+}
+
+pub fn apply_adaptive_memory_budget(game_dir: &Path) -> usize {
+    let sg = crate::resources::read_sonic_guard_settings(game_dir);
+    let mode = crate::resources::ResourceMode::from_str_lossy(&sg.resource_mode);
+    let sys = crate::resources::query_system_memory(mode);
+    apply_adaptive_memory_budget_for_avail(game_dir, sys.avail_phys_mb, mode)
 }
 
 fn toggle_skygfx_asi(game_dir: &Path, enable: bool) -> Result<(), String> {
@@ -522,12 +704,17 @@ fn sanitize_skygfx_templates(game_dir: &Path) -> Result<usize, String> {
 
     let sg1 = game_dir.join("skygfx1.ini");
     if sg1.exists()
-        && update_ini_keys(&sg1, &[("keySwitch", "0"), ("colorFilter", "PS2")], false)?
+        && update_ini_keys(
+            &sg1,
+            &[("keySwitch", "0"), ("colorFilter", "PS2")],
+            false,
+            None,
+        )?
     {
         fixed += 1;
     }
     let sg2 = game_dir.join("skygfx2.ini");
-    if sg2.exists() && update_ini_keys(&sg2, &[("keySwitch", "0")], false)? {
+    if sg2.exists() && update_ini_keys(&sg2, &[("keySwitch", "0")], false, None)? {
         fixed += 1;
     }
     let sg3 = game_dir.join("skygfx3.ini");
@@ -536,7 +723,7 @@ fn sanitize_skygfx_templates(game_dir: &Path) -> Result<usize, String> {
         if !has_texdb {
             updates.push(("detailMaps", "0"));
         }
-        if update_ini_keys(&sg3, &updates, false)? {
+        if update_ini_keys(&sg3, &updates, false, None)? {
             fixed += 1;
         }
     }
@@ -582,7 +769,7 @@ pub fn apply_skygfx_preset(game_dir: &Path, preset: &str) -> Result<String, Stri
     if mode == "mobile" && !has_texdb {
         enforce.push(("detailMaps", "0"));
     }
-    let _ = update_ini_keys(&target, &enforce, false);
+    let _ = update_ini_keys(&target, &enforce, false, None);
 
     Ok(format!("สลับโทนภาพเป็น {} เรียบร้อย (Rust Engine)", label))
 }
@@ -614,6 +801,7 @@ pub fn apply_fps_limit(game_dir: &Path, fps: u32) -> Result<String, String> {
                 ("PhysicsScale", physics_scale),
             ],
             true,
+            None,
         )?;
     }
 
@@ -622,6 +810,7 @@ pub fn apply_fps_limit(game_dir: &Path, fps: u32) -> Result<String, String> {
             &fv_ini,
             &[("FPSlimit", &fps_str), ("VehicleHandlingPatches", "1")],
             false,
+            None,
         )?;
     }
 
@@ -656,7 +845,20 @@ fn clean_bloated_logs_and_backups(game_dir: &Path) -> usize {
         }
     }
     let backup_dir = game_dir.join("_mod_backup");
-    if backup_dir.join("snapshots").join("index.json").exists() {
+    let snapshots_dir = backup_dir.join("snapshots");
+    let has_snapshot = snapshots_dir.is_dir()
+        && fs::read_dir(&snapshots_dir)
+            .ok()
+            .map(|rd| {
+                rd.flatten().any(|e| {
+                    e.path()
+                        .extension()
+                        .and_then(|x| x.to_str())
+                        .map_or(false, |s| s.eq_ignore_ascii_case("json"))
+                })
+            })
+            .unwrap_or(false);
+    if has_snapshot {
         if let Ok(rd) = fs::read_dir(&backup_dir) {
             for ent in rd.flatten() {
                 let p = ent.path();
@@ -674,22 +876,7 @@ fn clean_bloated_logs_and_backups(game_dir: &Path) -> usize {
 }
 
 fn sanitize_game_configs(game_dir: &Path) -> usize {
-    let mut count = 0usize;
-
-    let limit_ini = game_dir.join("III.VC.SA.LimitAdjuster.ini");
-    if limit_ini.exists() {
-        if let Ok(raw) = fs::read_to_string(&limit_ini) {
-            if raw.contains("MemoryAvailable = 50%") || raw.contains("MemoryAvailable=50%") {
-                if update_ini_keys(&limit_ini, &[("MemoryAvailable", "1024")], true).unwrap_or(false) {
-                    count += 1;
-                }
-            }
-        }
-    }
-
-    if sanitize_stream_ini(&game_dir.join("stream.ini")).unwrap_or(false) {
-        count += 1;
-    }
+    let mut count = apply_adaptive_memory_budget(game_dir);
 
     let unlock_ini = game_dir.join("scripts").join("FPSUnlock.ini");
     if unlock_ini.exists() {
@@ -700,6 +887,7 @@ fn sanitize_game_configs(game_dir: &Path) -> usize {
             &unlock_ini,
             &[("UnlockFPS", "1"), ("PhysicsScale", physics_scale)],
             true,
+            None,
         )
         .unwrap_or(false)
         {
@@ -709,7 +897,9 @@ fn sanitize_game_configs(game_dir: &Path) -> usize {
 
     count += sanitize_skygfx_templates(game_dir).unwrap_or(0);
     let active_sg = game_dir.join("skygfx.ini");
-    if active_sg.exists() && update_ini_keys(&active_sg, &[("keySwitch", "0")], false).unwrap_or(false) {
+    if active_sg.exists()
+        && update_ini_keys(&active_sg, &[("keySwitch", "0")], false, None).unwrap_or(false)
+    {
         count += 1;
     }
 
@@ -837,18 +1027,26 @@ mod tests {
         let dir = make_temp("gfx");
         fs::create_dir_all(dir.join("scripts")).unwrap();
 
-        // Build minimal PE with e_lfanew = 0x80 and Characteristics = 0x010F (no 0x0020 LAA)
+        // Build minimal PE32 with e_lfanew = 0x80, Characteristics = 0x010F (no 0x0020 LAA),
+        // and PE32 OptionalHeader magic = 0x010B
         let mut pe = vec![0u8; 256];
         pe[0] = b'M';
         pe[1] = b'Z';
         pe[0x3C] = 0x80;
         pe[0x80..0x84].copy_from_slice(b"PE\0\0");
         pe[0x80 + 22..0x80 + 24].copy_from_slice(&0x010Fu16.to_le_bytes());
+        pe[0x80 + 24..0x80 + 26].copy_from_slice(&0x010Bu16.to_le_bytes());
         let exe = dir.join("gta_sa.exe");
         fs::write(&exe, &pe).unwrap();
         assert_eq!(check_pe_laa(&exe), Some(false));
         assert!(enable_pe_laa(&exe).unwrap());
         assert_eq!(check_pe_laa(&exe), Some(true));
+
+        // Corrupt / non-PE32 magic must return None
+        pe[0x80 + 24..0x80 + 26].copy_from_slice(&0x020Bu16.to_le_bytes());
+        let bad_pe = dir.join("win64.exe");
+        fs::write(&bad_pe, &pe).unwrap();
+        assert_eq!(check_pe_laa(&bad_pe), None);
 
         // SkyGfx presets + asi toggling + keySwitch=0
         fs::write(dir.join("skygfx.asi"), b"asi").unwrap();
@@ -883,14 +1081,50 @@ mod tests {
         assert!(fv.contains("FPSlimit=240"));
         assert!(fv.contains("VehicleHandlingPatches=1"));
 
-        // Memory + stream.ini
-        fs::write(dir.join("stream.ini"), "memory\t\t524288\ndevkit_memory\t524288\n").unwrap();
+        // Memory + stream.ini adaptive and explicit modes
+        fs::write(dir.join("stream.ini"), "memory\t\t131072\ndevkit_memory\t131072\n").unwrap();
         fs::write(dir.join("III.VC.SA.LimitAdjuster.ini"), "[SALIMITS]\nMemoryAvailable = 50%\n").unwrap();
-        let _ = sanitize_game_configs(&dir);
+        let _ = apply_adaptive_memory_budget_for_avail(&dir, 6000, crate::resources::ResourceMode::Auto);
         let st = fs::read_to_string(dir.join("stream.ini")).unwrap();
         let la = fs::read_to_string(dir.join("III.VC.SA.LimitAdjuster.ini")).unwrap();
         assert!(st.contains("1048576"));
         assert!(la.contains("MemoryAvailable = 1024"));
+
+        let _ = apply_adaptive_memory_budget_for_avail(&dir, 1150, crate::resources::ResourceMode::Auto);
+        let st_low = fs::read_to_string(dir.join("stream.ini")).unwrap();
+        let la_low = fs::read_to_string(dir.join("III.VC.SA.LimitAdjuster.ini")).unwrap();
+        assert!(st_low.contains("524288"));
+        assert!(la_low.contains("MemoryAvailable = 512"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_ini_section_target_bom_strip_and_ignore_mods_dup() {
+        let dir = make_temp("ini_ign");
+        fs::create_dir_all(dir.join("scripts")).unwrap();
+        fs::create_dir_all(dir.join("modloader").join("IgnoredPack")).unwrap();
+
+        fs::write(dir.join("scripts").join("CoolMod.asi"), b"1").unwrap();
+        fs::write(dir.join("modloader").join("IgnoredPack").join("CoolMod.asi"), b"2").unwrap();
+        fs::write(
+            dir.join("modloader").join("modloader.ini"),
+            "[Folder.Config]\r\nProfile = Default\r\n[Profiles.Default.IgnoreMods]\r\nIgnoredPack\r\n",
+        )
+        .unwrap();
+        assert!(find_duplicate_asis(&dir).is_empty());
+
+        let ini = dir.join("multi.ini");
+        fs::write(
+            &ini,
+            "\u{feff}[OTHER]\r\nMode=keep\r\n[MAIN]\r\nMode=old\r\n",
+        )
+        .unwrap();
+        assert!(update_ini_keys(&ini, &[("Mode", "new"), ("Extra", "1")], false, Some("MAIN")).unwrap());
+        let after = fs::read_to_string(&ini).unwrap();
+        assert!(!after.starts_with('\u{feff}'));
+        assert!(after.contains("[OTHER]\r\nMode=keep"));
+        assert!(after.contains("[MAIN]\r\nMode=new\r\nExtra=1"));
 
         let _ = fs::remove_dir_all(&dir);
     }

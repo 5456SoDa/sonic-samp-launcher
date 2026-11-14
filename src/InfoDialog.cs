@@ -9,9 +9,18 @@ internal class InfoDialog : Form
 	private ListView lstR;
 	private Label lblLoad;
 	private Font fHeader;
+	private Font fTitle;
+	private Font fSub;
+	private Font fBtn;
+	private ICore coreRef;
 
-	public InfoDialog(ServerEntry e)
+	public InfoDialog(ServerEntry e) : this(e, null)
 	{
+	}
+
+	public InfoDialog(ServerEntry e, ICore core)
+	{
+		coreRef = core;
 		Text = "ข้อมูลเซิร์ฟเวอร์";
 		base.FormBorderStyle = FormBorderStyle.FixedDialog;
 		base.MaximizeBox = false;
@@ -22,11 +31,14 @@ internal class InfoDialog : Form
 		BackColor = Color.FromArgb(17, 17, 24);
 		Font = new Font("Segoe UI", 9.5f);
 		fHeader = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold);
+		fTitle = new Font("Segoe UI Semibold", 12.0f, FontStyle.Bold);
+		fSub = new Font("Segoe UI", 9f);
+		fBtn = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold);
 
 		Label lblTitle = new Label
 		{
 			Text = "🌐 " + ((e.Name.Length > 0) ? e.Name : (e.Ip + ":" + e.Port)),
-			Font = new Font("Segoe UI Semibold", 12.0f, FontStyle.Bold),
+			Font = fTitle,
 			ForeColor = Color.FromArgb(51, 204, 255),
 			BackColor = Color.Transparent,
 			Location = new Point(20, 12),
@@ -56,7 +68,7 @@ internal class InfoDialog : Form
 		Label lblSub = new Label
 		{
 			Text = subText,
-			Font = new Font("Segoe UI", 9f),
+			Font = fSub,
 			ForeColor = Color.FromArgb(140, 165, 195),
 			BackColor = Color.Transparent,
 			Location = new Point(22, 40),
@@ -83,10 +95,10 @@ internal class InfoDialog : Form
 		lstP.FullRowSelect = true;
 		lstP.Location = new Point(20, 88);
 		lstP.Size = new Size(444, 200);
-		lstP.Columns.Add("ID", DpiHelper.S(46));
-		lstP.Columns.Add("ชื่อผู้เล่น", DpiHelper.S(212));
-		lstP.Columns.Add("Score", DpiHelper.S(86));
-		lstP.Columns.Add("Ping", DpiHelper.S(80));
+		lstP.Columns.Add("ID", 46);
+		lstP.Columns.Add("ชื่อผู้เล่น", 212);
+		lstP.Columns.Add("Score", 86);
+		lstP.Columns.Add("Ping", 80);
 		ApplyDarkOwnerDraw(lstP);
 		base.Controls.Add(lstP);
 
@@ -108,8 +120,8 @@ internal class InfoDialog : Form
 		lstR.FullRowSelect = true;
 		lstR.Location = new Point(20, 322);
 		lstR.Size = new Size(444, 148);
-		lstR.Columns.Add("คีย์ (Key)", DpiHelper.S(150));
-		lstR.Columns.Add("ค่า (Value)", DpiHelper.S(274));
+		lstR.Columns.Add("คีย์ (Key)", 150);
+		lstR.Columns.Add("ค่า (Value)", 274);
 		ApplyDarkOwnerDraw(lstR);
 		base.Controls.Add(lstR);
 
@@ -121,7 +133,7 @@ internal class InfoDialog : Form
 		lblLoad.AutoSize = true;
 		base.Controls.Add(lblLoad);
 
-		RoundedBtn roundedBtn = new RoundedBtn("ปิด (Esc)", Color.FromArgb(51, 204, 255), Color.FromArgb(102, 224, 255), Color.FromArgb(11, 14, 20), 8, new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold));
+		RoundedBtn roundedBtn = new RoundedBtn("ปิด (Esc)", Color.FromArgb(51, 204, 255), Color.FromArgb(102, 224, 255), Color.FromArgb(11, 14, 20), 8, fBtn);
 		roundedBtn.Location = new Point(364, 478);
 		roundedBtn.Size = new Size(100, 34);
 		roundedBtn.Click += delegate
@@ -132,6 +144,11 @@ internal class InfoDialog : Form
 		base.AcceptButton = roundedBtn;
 		base.CancelButton = roundedBtn;
 		DpiHelper.ScaleControlTree(this);
+		if (coreRef != null)
+		{
+			lstP.HandleCreated += delegate { try { coreRef.StyleListView(lstP.Handle, Color.FromArgb(20, 25, 38), Color.FromArgb(51, 204, 255)); } catch { } };
+			lstR.HandleCreated += delegate { try { coreRef.StyleListView(lstR.Handle, Color.FromArgb(20, 25, 38), Color.FromArgb(51, 204, 255)); } catch { } };
+		}
 	}
 
 	private void ApplyDarkOwnerDraw(ListView lv)
@@ -184,10 +201,13 @@ internal class InfoDialog : Form
 
 	protected override void Dispose(bool disposing)
 	{
-		if (disposing && fHeader != null)
+		if (disposing)
 		{
-			fHeader.Dispose();
-			fHeader = null;
+			if (fHeader != null) { fHeader.Dispose(); fHeader = null; }
+			if (fTitle != null) { fTitle.Dispose(); fTitle = null; }
+			if (fSub != null) { fSub.Dispose(); fSub = null; }
+			if (fBtn != null) { fBtn.Dispose(); fBtn = null; }
+			if (Font != null) { try { Font.Dispose(); } catch { } }
 		}
 		base.Dispose(disposing);
 	}

@@ -1,16 +1,25 @@
 mod assets;
+mod audio;
 mod backup;
 mod crash;
 mod db;
+mod discord;
 mod dwm;
+mod gpu;
 mod health;
 mod inject;
 mod modloader_cfg;
+mod net_shield;
 mod ping_spark;
 mod protocol;
 mod public_list;
 mod query;
 mod rcon;
+mod resources;
+mod settings;
+mod tools_io;
+mod watchdog;
+mod win_ro;
 
 use query::ServerTarget;
 use std::ffi::{CStr, CString};
@@ -26,9 +35,11 @@ unsafe fn read_cstr(ptr: *const c_char) -> Option<String> {
     Some(CStr::from_ptr(ptr).to_string_lossy().into_owned())
 }
 
-fn into_cstr(s: String) -> *mut c_char {
-    let cleaned = s.replace('\0', "");
-    match CString::new(cleaned) {
+fn into_cstr(mut s: String) -> *mut c_char {
+    if s.as_bytes().contains(&0) {
+        s = s.replace('\0', "");
+    }
+    match CString::new(s) {
         Ok(cs) => cs.into_raw(),
         Err(_) => null_mut(),
     }
@@ -132,7 +143,7 @@ pub extern "C" fn core_launch_and_inject(
         };
         let pw = read_cstr(pass).unwrap_or_default();
         match inject::launch_and_inject(&gta, &dll, &cwd, &n, &i, &p, &pw) {
-            Ok(()) => null_mut(),
+            Ok(_pid) => null_mut(),
             Err(e) => into_cstr(e),
         }
     })
@@ -385,10 +396,13 @@ pub extern "C" fn core_snapshot_delete(
 
 #[no_mangle]
 pub extern "C" fn core_db_close() {
-    let _ = std::panic::catch_unwind(|| {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
         ping_spark::stop_ping();
+        query::stop_slot_watch();
+        watchdog::stop_watchdog();
+        discord::shutdown();
         db::close_db();
-    });
+    }));
 }
 
 #[no_mangle]
@@ -416,7 +430,7 @@ pub extern "C" fn core_modloader_get(game_dir: *const c_char) -> *mut c_char {
                 .ok()
                 .map(into_cstr)
                 .unwrap_or(null_mut()),
-            Err(e) => into_cstr(format!("{{\"error\":\"{}\"}}", e.replace('"', "\\\""))),
+            Err(e) => into_cstr(serde_json::json!({ "error": e }).to_string()),
         }
     })
 }
@@ -552,6 +566,402 @@ pub extern "C" fn core_modloader_set_priority(
         match modloader_cfg::set_folder_priority(Path::new(&gd), &fnm, priority) {
             Ok(()) => null_mut(),
             Err(e) => into_cstr(e),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_shield_diagnostics(
+    game_dir: *const c_char,
+    _host: *const c_char,
+    _port: u16,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return null_mut();
+        };
+        let gpath = Path::new(&gd);
+        let settings = resources::read_sonic_guard_settings(gpath);
+        let mode = resources::ResourceMode::from_str_lossy(&settings.resource_mode);
+        let net = net_shield::inspect_net_diagnostics(gpath);
+        let aud = audio::inspect_audio_diagnostics(gpath);
+        let gpu_info = gpu::inspect_gpu_status(gpath);
+        let res_info = resources::query_system_memory(mode);
+
+        let payload = serde_json::json!({
+            "settings": settings,
+            "net": net,
+            "audio": aud,
+            "gpu": gpu_info,
+            "resources": res_info,
+        });
+        serde_json::to_string(&payload)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_shield_save_ini(
+    game_dir: *const c_char,
+    updates_json: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return into_cstr("{\"ok\":false,\"error\":\"ไม่พบโฟลเดอร์เกม\"}".into());
+        };
+        let raw_json = read_cstr(updates_json).unwrap_or_default();
+        let map: std::collections::HashMap<String, String> = match serde_json::from_str(&raw_json) {
+            Ok(m) => m,
+            Err(e) => return json_ok_or_err::<()>(Err(format!("ข้อมูล JSON ไม่ถูกต้อง: {}", e))),
+        };
+        let gpath = Path::new(&gd);
+        let res = resources::save_sonic_guard_settings(gpath, &map).map(|_| {
+            if map.keys().any(|k| k.eq_ignore_ascii_case("ResourceMode")) {
+                let _ = health::apply_adaptive_memory_budget(gpath);
+            }
+            "บันทึกการตั้งค่า SonicGuard สำเร็จ"
+        });
+        json_ok_or_err(res)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_audio_list_mics() -> *mut c_char {
+    guard_ptr(|| {
+        let mics = audio::list_capture_devices();
+        serde_json::to_string(&mics)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_prewarm_server(host: *const c_char, port: u16) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(h) = read_cstr(host).filter(|s| !s.is_empty()) else {
+            return null_mut();
+        };
+        let rep = net_shield::prewarm_connection(&h, port, None);
+        serde_json::to_string(&rep)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_trim_memory() -> u64 {
+    guard_u64(resources::trim_current_process_working_set)
+}
+
+fn guard_i32<F: FnOnce() -> i32>(f: F) -> i32 {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or(-1)
+}
+
+fn err_cstr(res: Result<(), String>) -> *mut c_char {
+    match res {
+        Ok(()) => null_mut(),
+        Err(e) => into_cstr(e),
+    }
+}
+
+fn db_server_op<F>(
+    ip: *const c_char,
+    port: *const c_char,
+    name: *const c_char,
+    op: F,
+) -> *mut c_char
+where
+    F: FnOnce(&str, &str, &str) -> Result<(), String>,
+{
+    guard_ptr(|| unsafe {
+        let (Some(i), Some(p)) = (
+            read_cstr(ip).filter(|s| !s.trim().is_empty()),
+            read_cstr(port).filter(|s| !s.trim().is_empty()),
+        ) else {
+            return into_cstr("ข้อมูล IP/Port ไม่ครบ".into());
+        };
+        let n = read_cstr(name).unwrap_or_default();
+        err_cstr(op(&i, &p, &n))
+    })
+}
+
+fn db_remove_op<F>(ip: *const c_char, port: *const c_char, op: F) -> i32
+where
+    F: FnOnce(&str, &str) -> Result<bool, String>,
+{
+    guard_i32(|| unsafe {
+        let (Some(i), Some(p)) = (
+            read_cstr(ip).filter(|s| !s.trim().is_empty()),
+            read_cstr(port).filter(|s| !s.trim().is_empty()),
+        ) else {
+            return -1;
+        };
+        match op(&i, &p) {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_settings_load(cfg_path: *const c_char) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(p) = read_cstr(cfg_path).filter(|s| !s.is_empty()) else {
+            return into_cstr("{\"ok\":false,\"error\":\"ไม่พบเส้นทางไฟล์ตั้งค่า\"}".into());
+        };
+        json_ok_or_err(settings::load_launcher_config(Path::new(&p)))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_settings_save(
+    cfg_path: *const c_char,
+    json: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(p) = read_cstr(cfg_path).filter(|s| !s.is_empty()) else {
+            return into_cstr("ไม่พบเส้นทางไฟล์ตั้งค่า".into());
+        };
+        let raw_json = read_cstr(json).unwrap_or_default();
+        let cfg: settings::LauncherConfig = match serde_json::from_str(&raw_json) {
+            Ok(c) => c,
+            Err(e) => return into_cstr(format!("ข้อมูลตั้งค่า JSON ไม่ถูกต้อง: {}", e)),
+        };
+        err_cstr(settings::save_launcher_config(Path::new(&p), &cfg))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_alt_tab_set(game_dir: *const c_char, enable: bool) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(gd) = read_cstr(game_dir).filter(|s| !s.is_empty()) else {
+            return into_cstr("ไม่พบโฟลเดอร์เกม".into());
+        };
+        err_cstr(settings::set_alt_tab_nopause(Path::new(&gd), enable))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_reset_gta_set() -> *mut c_char {
+    guard_ptr(|| json_ok_or_err(settings::reset_gta_sa_set()))
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_fav_list() -> *mut c_char {
+    guard_ptr(|| match db::get_favorites() {
+        Ok(list) => serde_json::to_string(&list)
+            .map(into_cstr)
+            .unwrap_or(null_mut()),
+        Err(_) => into_cstr("[]".into()),
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_fav_upsert(
+    ip: *const c_char,
+    port: *const c_char,
+    name: *const c_char,
+) -> *mut c_char {
+    db_server_op(ip, port, name, db::upsert_favorite)
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_fav_remove(ip: *const c_char, port: *const c_char) -> i32 {
+    db_remove_op(ip, port, db::remove_favorite)
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_hist_list(limit: u32) -> *mut c_char {
+    guard_ptr(|| {
+        let cap = if limit == 0 { 30 } else { limit as usize };
+        match db::get_history(cap) {
+            Ok(list) => serde_json::to_string(&list)
+                .map(into_cstr)
+                .unwrap_or(null_mut()),
+            Err(_) => into_cstr("[]".into()),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_hist_record(
+    ip: *const c_char,
+    port: *const c_char,
+    name: *const c_char,
+) -> *mut c_char {
+    db_server_op(ip, port, name, db::record_history)
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_hist_remove(ip: *const c_char, port: *const c_char) -> i32 {
+    db_remove_op(ip, port, db::remove_history)
+}
+
+#[no_mangle]
+pub extern "C" fn core_db_server_rename(
+    ip: *const c_char,
+    port: *const c_char,
+    name: *const c_char,
+) -> *mut c_char {
+    db_server_op(ip, port, name, db::update_server_name)
+}
+
+#[no_mangle]
+pub extern "C" fn core_watchdog_poll() -> *mut c_char {
+    guard_ptr(|| {
+        let st = watchdog::poll_watchdog();
+        serde_json::to_string(&st)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_watchdog_stop() {
+    let _ = catch_unwind(AssertUnwindSafe(watchdog::stop_watchdog));
+}
+
+#[no_mangle]
+pub extern "C" fn core_is_game_running() -> i32 {
+    guard_i32(|| if watchdog::is_gta_sa_running() { 1 } else { 0 })
+}
+
+#[no_mangle]
+pub extern "C" fn core_query_server_details(host: *const c_char, port: u16) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let Some(h) = read_cstr(host).filter(|s| !s.trim().is_empty()) else {
+            return null_mut();
+        };
+        let res = query::query_server_details_sync(&h, port);
+        serde_json::to_string(&res)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_slot_watch_start(host: *const c_char, port: u16) -> i32 {
+    guard_i32(|| unsafe {
+        let Some(h) = read_cstr(host).filter(|s| !s.trim().is_empty()) else {
+            return 0;
+        };
+        if query::start_slot_watch(&h, port) {
+            1
+        } else {
+            0
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_slot_watch_stop() {
+    let _ = catch_unwind(AssertUnwindSafe(query::stop_slot_watch));
+}
+
+#[no_mangle]
+pub extern "C" fn core_slot_watch_poll() -> *mut c_char {
+    guard_ptr(|| {
+        let st = query::poll_slot_watch();
+        serde_json::to_string(&st)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_discord_init(client_id: *const c_char) {
+    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+        let cid = read_cstr(client_id).unwrap_or_default();
+        discord::init(&cid);
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn core_discord_set_enabled(enabled: bool) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        discord::set_enabled(enabled);
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn core_discord_presence_launcher() {
+    let _ = catch_unwind(AssertUnwindSafe(discord::update_launcher_presence));
+}
+
+#[no_mangle]
+pub extern "C" fn core_discord_presence_game(
+    server_name: *const c_char,
+    ip: *const c_char,
+    port: *const c_char,
+    players: i32,
+    max: i32,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+        let nm = read_cstr(server_name).unwrap_or_default();
+        let i = read_cstr(ip).unwrap_or_default();
+        let p = read_cstr(port).unwrap_or_default();
+        discord::update_game_presence(&nm, &i, &p, players, max);
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn core_discord_clear() {
+    let _ = catch_unwind(AssertUnwindSafe(discord::clear_presence));
+}
+
+#[no_mangle]
+pub extern "C" fn core_discord_shutdown() {
+    let _ = catch_unwind(AssertUnwindSafe(discord::shutdown));
+}
+
+#[no_mangle]
+pub extern "C" fn core_chatlog_read(
+    path: *const c_char,
+    max_bytes: u32,
+    max_lines: u32,
+    query: *const c_char,
+) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let p_opt = read_cstr(path).filter(|s| !s.trim().is_empty());
+        let q = read_cstr(query).unwrap_or_default();
+        json_ok_or_err(tools_io::read_chatlog_file(
+            p_opt.as_deref().map(Path::new),
+            max_bytes as usize,
+            max_lines as usize,
+            &q,
+        ))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_gallery_scan(dir: *const c_char, max_items: u32) -> *mut c_char {
+    guard_ptr(|| unsafe {
+        let d_opt = read_cstr(dir).filter(|s| !s.trim().is_empty());
+        let cap = if max_items == 0 { 240 } else { max_items as usize };
+        let res = tools_io::scan_gallery_dir(d_opt.as_deref().map(Path::new), cap);
+        serde_json::to_string(&res)
+            .ok()
+            .map(into_cstr)
+            .unwrap_or(null_mut())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn core_audio_cue(kind: *const c_char) -> i32 {
+    guard_i32(|| unsafe {
+        let k = read_cstr(kind).unwrap_or_default();
+        if tools_io::play_audio_cue(&k) {
+            1
+        } else {
+            0
         }
     })
 }

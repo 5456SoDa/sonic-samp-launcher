@@ -42,7 +42,7 @@ internal class RingGauge : Control
 		}
 		if (Ratio > 0f)
 		{
-			Color activeRing = (Ratio > 0.95f) ? Color.FromArgb(255, 235, 0) : ((Ratio > 0f) ? RingColor : Color.FromArgb(102, 255, 0));
+			Color activeRing = (Ratio > 0.95f) ? Color.FromArgb(255, 235, 0) : RingColor;
 			using (Pen pen2 = new Pen(activeRing, stroke))
 			{
 				graphics.DrawArc(pen2, rect, -90f, 360f * Math.Min(1f, Ratio));

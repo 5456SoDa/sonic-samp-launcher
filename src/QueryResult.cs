@@ -15,4 +15,6 @@ internal class QueryResult
 	public string Language = "";
 
 	public bool IsOpenMp;
+
+	public bool Locked;
 }

@@ -3,12 +3,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows_sys::Win32::Foundation::SYSTEMTIME;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 
 const MAX_MODLOADER_FILE_BYTES: u64 = 32 * 1024 * 1024;
+
+fn snapshot_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotFileEntry {
@@ -212,6 +218,11 @@ fn collect_snapshot_targets(game_dir: &Path) -> CollectedTargets {
 }
 
 pub fn create_snapshot(game_dir: &Path, name: &str) -> Result<SnapshotSummary, String> {
+    let _guard = snapshot_lock().lock().unwrap_or_else(|e| e.into_inner());
+    create_snapshot_inner(game_dir, name)
+}
+
+fn create_snapshot_inner(game_dir: &Path, name: &str) -> Result<SnapshotSummary, String> {
     if !game_dir.is_dir() {
         return Err("ไม่พบโฟลเดอร์เกม".into());
     }
@@ -257,7 +268,10 @@ pub fn create_snapshot(game_dir: &Path, name: &str) -> Result<SnapshotSummary, S
                 .map_err(|e| format!("Zstd encode error: {}", e))?;
             let tmp_blob = blobs.join(format!("{}.zst.tmp", hash));
             fs::write(&tmp_blob, &compressed).map_err(|e| format!("เขียน blob ไม่สำเร็จ: {}", e))?;
-            let _ = fs::rename(&tmp_blob, &blob_path);
+            if let Err(e) = fs::rename(&tmp_blob, &blob_path) {
+                let _ = fs::remove_file(&tmp_blob);
+                return Err(format!("ย้าย blob เข้าคลังสำรองไม่สำเร็จ: {}", e));
+            }
             compressed.len() as u64
         };
 
@@ -339,6 +353,7 @@ pub fn list_snapshots(game_dir: &Path) -> Result<Vec<SnapshotSummary>, String> {
 }
 
 pub fn restore_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<RestoreSummary, String> {
+    let _guard = snapshot_lock().lock().unwrap_or_else(|e| e.into_inner());
     let clean_id = Path::new(snapshot_id)
         .file_name()
         .and_then(|n| n.to_str())
@@ -349,8 +364,53 @@ pub fn restore_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<RestoreSum
     let manifest: SnapshotManifest =
         serde_json::from_str(&raw_json).map_err(|e| format!("Snapshot เสียหาย: {}", e))?;
 
+    let blobs = blobs_dir(game_dir);
+    let mut verified_items: Vec<(std::path::PathBuf, Vec<u8>, String)> =
+        Vec::with_capacity(manifest.files.len());
+
+    // Pre-validate every snapshot entry & decompress/verify checksums BEFORE mutating game_dir
+    for item in &manifest.files {
+        let rel = Path::new(&item.rel_path);
+        if rel.is_absolute()
+            || rel.components().any(|c| {
+                matches!(
+                    c,
+                    Component::ParentDir | Component::Prefix(_) | Component::RootDir
+                )
+            })
+        {
+            return Err(format!("พบ path ไม่ปลอดภัยใน snapshot: {}", item.rel_path));
+        }
+        if item.sha256.is_empty()
+            || item
+                .sha256
+                .bytes()
+                .any(|b| !b.is_ascii_hexdigit())
+        {
+            return Err(format!("Checksum ใน snapshot ไม่ถูกต้อง: {}", item.rel_path));
+        }
+        let blob_path = blobs.join(format!("{}.zst", item.sha256));
+        let mut f = File::open(&blob_path).map_err(|e| {
+            format!(
+                "ไม่พบไฟล์สำรองในคลังสำหรับ {}: {}",
+                item.rel_path, e
+            )
+        })?;
+        let mut comp_bytes = Vec::new();
+        f.read_to_end(&mut comp_bytes).map_err(|e| {
+            format!("อ่าน blob สำรองของ {} ไม่สำเร็จ: {}", item.rel_path, e)
+        })?;
+        let plain = zstd::stream::decode_all(comp_bytes.as_slice()).map_err(|e| {
+            format!("ไฟล์สำรอง {} เสียหาย (Zstd): {}", item.rel_path, e)
+        })?;
+        if sha256_bytes(&plain) != item.sha256 {
+            return Err(format!("Checksum ไม่ตรงสำหรับไฟล์ {}", item.rel_path));
+        }
+        verified_items.push((rel.to_path_buf(), plain, item.rel_path.clone()));
+    }
+
     // Auto-backup current game state before applying restore (unless no target files exist)
-    let pre_restore_id = match create_snapshot(
+    let pre_restore_id = match create_snapshot_inner(
         game_dir,
         &format!("Auto Pre-Restore ({})", manifest.name),
     ) {
@@ -358,35 +418,9 @@ pub fn restore_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<RestoreSum
         Err(_) => String::new(),
     };
 
-    let blobs = blobs_dir(game_dir);
     let mut restored = 0usize;
-
-    for item in &manifest.files {
-        // Guard against path traversal in manifests
-        let rel = Path::new(&item.rel_path);
-        if rel.is_absolute()
-            || rel
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            continue;
-        }
-        let blob_path = blobs.join(format!("{}.zst", item.sha256));
-        let Ok(mut f) = File::open(&blob_path) else {
-            continue;
-        };
-        let mut comp_bytes = Vec::new();
-        if f.read_to_end(&mut comp_bytes).is_err() {
-            continue;
-        }
-        let Ok(plain) = zstd::stream::decode_all(comp_bytes.as_slice()) else {
-            continue;
-        };
-        if sha256_bytes(&plain) != item.sha256 {
-            return Err(format!("Checksum ไม่ตรงสำหรับไฟล์ {}", item.rel_path));
-        }
-
-        let dest = game_dir.join(rel);
+    for (rel, plain, rel_display) in verified_items {
+        let dest = game_dir.join(&rel);
         if let Some(parent) = dest.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -397,11 +431,11 @@ pub fn restore_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<RestoreSum
                 let _ = fs::set_permissions(&dest, perms);
             }
         }
-        let mut out_f =
-            File::create(&dest).map_err(|e| format!("เขียนไฟล์ {} ไม่สำเร็จ: {}", item.rel_path, e))?;
+        let mut out_f = File::create(&dest)
+            .map_err(|e| format!("เขียนไฟล์ {} ไม่สำเร็จ: {}", rel_display, e))?;
         out_f
             .write_all(&plain)
-            .map_err(|e| format!("เขียนไฟล์ {} ไม่สำเร็จ: {}", item.rel_path, e))?;
+            .map_err(|e| format!("เขียนไฟล์ {} ไม่สำเร็จ: {}", rel_display, e))?;
         restored += 1;
     }
 
@@ -414,6 +448,7 @@ pub fn restore_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<RestoreSum
 }
 
 pub fn delete_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<(), String> {
+    let _guard = snapshot_lock().lock().unwrap_or_else(|e| e.into_inner());
     let clean_id = Path::new(snapshot_id)
         .file_name()
         .and_then(|n| n.to_str())
@@ -425,19 +460,25 @@ pub fn delete_snapshot(game_dir: &Path, snapshot_id: &str) -> Result<(), String>
     }
     fs::remove_file(&target).map_err(|e| format!("ลบ snapshot ไม่สำเร็จ: {}", e))?;
 
-    // Garbage-collect unreferenced blobs
+    // Garbage-collect unreferenced blobs only when ALL sibling manifests read & parse cleanly
     let mut keep_hashes = HashSet::new();
-    if let Ok(rd) = fs::read_dir(&snaps) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("json") {
-                if let Ok(raw) = fs::read_to_string(&p) {
-                    if let Ok(m) = serde_json::from_str::<SnapshotManifest>(&raw) {
-                        for f in m.files {
-                            keep_hashes.insert(f.sha256);
-                        }
-                    }
-                }
+    let Ok(rd) = fs::read_dir(&snaps) else {
+        return Ok(());
+    };
+    for e in rd {
+        let Ok(ent) = e else {
+            return Ok(());
+        };
+        let p = ent.path();
+        if p.extension().and_then(|x| x.to_str()) == Some("json") {
+            let Ok(raw) = fs::read_to_string(&p) else {
+                return Ok(());
+            };
+            let Ok(m) = serde_json::from_str::<SnapshotManifest>(&raw) else {
+                return Ok(());
+            };
+            for f in m.files {
+                keep_hashes.insert(f.sha256);
             }
         }
     }
@@ -530,6 +571,52 @@ mod tests {
         assert_eq!(snap.file_count, 1);
         assert_eq!(snap.skipped_large_count, 1);
         assert_eq!(snap.skipped_large_files, vec!["modloader\\hd\\huge.txd"]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_restore_rejects_missing_blob_and_corrupt_sibling_aborts_gc() {
+        let dir = temp_game("guard");
+        fs::write(dir.join("skygfx.ini"), b"orig").unwrap();
+        let s1 = create_snapshot(&dir, "Good").unwrap();
+
+        // Corrupt a sibling manifest and delete s1 -> existing blob must NOT be GC'd
+        fs::write(snapshots_dir(&dir).join("broken_sibling.json"), b"{not valid json").unwrap();
+        fs::write(dir.join("skygfx.ini"), b"modified").unwrap();
+        let s2 = create_snapshot(&dir, "Second").unwrap();
+        delete_snapshot(&dir, &s2.id).unwrap();
+        assert!(fs::read_dir(blobs_dir(&dir)).unwrap().count() >= 1);
+
+        // Remove corrupt sibling so we test missing blob detection cleanly on restore
+        let _ = fs::remove_file(snapshots_dir(&dir).join("broken_sibling.json"));
+        for e in fs::read_dir(blobs_dir(&dir)).unwrap().flatten() {
+            let _ = fs::remove_file(e.path());
+        }
+        assert!(restore_snapshot(&dir, &s1.id).is_err());
+
+        // Reject Component::Prefix path traversal
+        let trav = SnapshotManifest {
+            id: "trav".into(),
+            name: "trav".into(),
+            created_at: "now".into(),
+            total_raw_bytes: 0,
+            total_compressed_bytes: 0,
+            files: vec![SnapshotFileEntry {
+                rel_path: r"C:\Windows\win.ini".into(),
+                size: 0,
+                sha256: "00".into(),
+            }],
+            skipped_large_count: 0,
+            skipped_large_files: Vec::new(),
+        };
+        fs::write(
+            snapshots_dir(&dir).join("trav.json"),
+            serde_json::to_string(&trav).unwrap(),
+        )
+        .unwrap();
+        let err = restore_snapshot(&dir, "trav").unwrap_err();
+        assert!(err.contains("path"));
 
         let _ = fs::remove_dir_all(&dir);
     }

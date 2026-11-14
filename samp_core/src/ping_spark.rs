@@ -1,4 +1,4 @@
-use crate::protocol::build_query_packet;
+use crate::protocol::build_ping_packet;
 use crate::query::resolve_host;
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -63,14 +63,14 @@ fn ping_once(host: &str, port: u16) -> i32 {
     if sock.connect(SocketAddr::new(IpAddr::V4(ip), port)).is_err() {
         return -1;
     }
-    let pkt = build_query_packet(ip, port, b'i');
+    let pkt = build_ping_packet(ip, port, *b"SONC");
     let t0 = Instant::now();
     if sock.send(&pkt).is_err() {
         return -1;
     }
     let mut buf = [0u8; 512];
     match sock.recv(&mut buf) {
-        Ok(n) if n >= 11 && &buf[..4] == b"SAMP" => {
+        Ok(n) if n >= 11 && &buf[..4] == b"SAMP" && buf[10] == b'p' => {
             let ms = t0.elapsed().as_millis() as i32;
             ms.max(1)
         }
@@ -80,6 +80,8 @@ fn ping_once(host: &str, port: u16) -> i32 {
 
 fn worker_loop() {
     let h = hub();
+    let mut last_gen: u64 = 0;
+    let mut next_tick = Instant::now();
     loop {
         let (host, port, gen) = {
             let mut guard = match h.lock.lock() {
@@ -95,6 +97,12 @@ fn worker_loop() {
             (guard.target_host.clone(), guard.target_port, guard.gen)
         };
 
+        if gen != last_gen {
+            last_gen = gen;
+            next_tick = Instant::now();
+        }
+        next_tick += Duration::from_millis(POLL_INTERVAL_MS);
+
         let rtt = ping_once(&host, port);
 
         {
@@ -108,10 +116,10 @@ fn worker_loop() {
                 }
                 guard.samples.push_back(rtt);
             }
-            // Wait up to POLL_INTERVAL_MS unless target changes or stop is called
             let current_gen = guard.gen;
-            if guard.active && current_gen == gen {
-                let _ = h.cv.wait_timeout_while(guard, Duration::from_millis(POLL_INTERVAL_MS), |st| {
+            let wait_dur = next_tick.saturating_duration_since(Instant::now());
+            if guard.active && current_gen == gen && !wait_dur.is_zero() {
+                let _ = h.cv.wait_timeout_while(guard, wait_dur, |st| {
                     st.active && st.gen == current_gen
                 });
             }

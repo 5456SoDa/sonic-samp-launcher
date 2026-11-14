@@ -17,6 +17,32 @@ internal partial class LauncherForm : Form
 	private Label lblTelemetryInfo;
 	private Label lblModloaderInfo;
 	private RoundedBtn btnViewCrash;
+	private RoundedBtn btnTurboShield;
+
+	private int modsRefreshSeq = 0;
+
+	private void OpenTurboShieldDialog()
+	{
+		string host = FieldVal(txtIp);
+		int port = 7777;
+		int parsed;
+		if (int.TryParse(FieldVal(txtPort), out parsed) && parsed >= 1 && parsed <= 65535)
+		{
+			port = parsed;
+		}
+		using (TurboShieldDialog dlg = new TurboShieldDialog(core, GetGameDir(), host, port, colAccent))
+		{
+			if (dlg.ShowDialog(this) == DialogResult.OK)
+			{
+				RefreshModsPage();
+				if (pnlSet != null && pnlSet.Visible)
+				{
+					RunHealthCheck();
+				}
+				ToastOk("บันทึกการตั้งค่า Turbo Shield เรียบร้อย (มีผลเมื่อเข้าเกมครั้งถัดไป)");
+			}
+		}
+	}
 	private ModLoaderState cachedModState;
 	private bool modsPageLoading;
 	private bool assetScanBusy;
@@ -63,7 +89,15 @@ internal partial class LauncherForm : Form
 		{
 			if (!modsPageLoading)
 			{
-				SaveSonicGuardIniValue("Borderless", swBorderless.Checked ? "1" : "0");
+				Dictionary<string, string> upd = new Dictionary<string, string>();
+				upd["Borderless"] = swBorderless.Checked ? "1" : "0";
+				string err = core.SaveShieldIni(GetGameDir(), upd);
+				if (!string.IsNullOrEmpty(err))
+				{
+					swBorderless.SetCheckedSilent(!swBorderless.Checked);
+					ShowErr(err);
+					return;
+				}
 				ToastOk(swBorderless.Checked
 					? "เปิดโหมด Borderless Windowed แล้ว (ใช้ตอนเข้าเกมครั้งถัดไป)"
 					: "ปิดโหมด Borderless Windowed แล้ว");
@@ -74,17 +108,17 @@ internal partial class LauncherForm : Form
 		AddLbl(pnlGuardCard, "ป้องกันจอดำ/ค้างเวลาพับจอ Alt+Tab", fSmall, 68, 130, colSub);
 
 		SmoothPanel pnlTele = new SmoothPanel(colField, 8);
-		pnlTele.Location = new Point(14, 158);
-		pnlTele.Size = new Size(298, 82);
+		pnlTele.Location = new Point(14, 154);
+		pnlTele.Size = new Size(298, 90);
 		pnlTele.BorderColor = Color.FromArgb(35, 52, 82);
 		pnlGuardCard.Controls.Add(pnlTele);
 
-		AddLbl(pnlTele, "📊 สถิติ RAM ล่าสุดจากเกม (Telemetry)", fSmall, 12, 8, colAccent);
-		lblTelemetryInfo = AddLbl(pnlTele, "ยังไม่มีข้อมูล (เล่นเกมพร้อม SonicGuard เพื่อบันทึก)", fSmall, 12, 30, colSub);
+		AddLbl(pnlTele, "📊 สถิติ RAM & Shield ล่าสุด (Telemetry)", fSmall, 12, 6, colAccent);
+		lblTelemetryInfo = AddLbl(pnlTele, "ยังไม่มีข้อมูล (เล่นเกมพร้อม SonicGuard เพื่อบันทึก)", fSmall, 12, 26, colSub);
 		lblTelemetryInfo.AutoSize = false;
-		lblTelemetryInfo.Size = new Size(274, 44);
+		lblTelemetryInfo.Size = new Size(274, 60);
 
-		RoundedBtn btnScanAssets = MakeMiniBtn("⚡  สแกนไฟล์เสีย DFF / TXD / IMG", 14, 252, 298, 38);
+		RoundedBtn btnScanAssets = MakeMiniBtn("⚡ สแกน DFF / TXD", 14, 250, 145, 36);
 		btnScanAssets.BorderColor = colAccent;
 		btnScanAssets.Click += delegate
 		{
@@ -92,11 +126,19 @@ internal partial class LauncherForm : Form
 		};
 		pnlGuardCard.Controls.Add(btnScanAssets);
 
-		Label lblScanHint = AddLbl(pnlGuardCard, "ตรวจจับโมเดลพัง เท็กซ์เจอร์เกินขนาด (>1024px) และม็อดชื่อซ้ำ", fSmall, 14, 296, colSub);
+		btnTurboShield = MakeMiniBtn("🛡️ Turbo Shield", 167, 250, 145, 36);
+		btnTurboShield.BorderColor = colAccent;
+		btnTurboShield.Click += delegate
+		{
+			OpenTurboShieldDialog();
+		};
+		pnlGuardCard.Controls.Add(btnTurboShield);
+
+		Label lblScanHint = AddLbl(pnlGuardCard, "ตรวจม็อด/เท็กซ์เจอร์ซ้ำ • ตั้งค่า Shield เน็ต/ไมค์/GPU/RAM", fSmall, 14, 290, colSub);
 		lblScanHint.AutoSize = false;
 		lblScanHint.Size = new Size(298, 32);
 
-		btnViewCrash = MakeMiniBtn("⚠️  ดูรายงานแครชล่าสุด", 14, 336, 298, 36);
+		btnViewCrash = MakeMiniBtn("⚠️  ดูรายงานแครชล่าสุด", 14, 328, 298, 36);
 		btnViewCrash.BorderColor = Color.FromArgb(243, 156, 18);
 		btnViewCrash.Click += delegate
 		{
@@ -208,6 +250,7 @@ internal partial class LauncherForm : Form
 	private void RefreshModsPage()
 	{
 		modsPageLoading = true;
+		int reqSeq = ++modsRefreshSeq;
 		try
 		{
 			string gameDir = GetGameDir();
@@ -216,39 +259,69 @@ internal partial class LauncherForm : Form
 
 			bool asiExists = File.Exists(asiPath);
 			bool asiDisExists = File.Exists(asiDisabled);
-			string iniEnable = ReadSonicGuardIniValue("Enable", "1");
-			string iniBorderless = ReadSonicGuardIniValue("Borderless", "0");
 
 			if (asiExists)
 			{
 				lblGuardStatus.Text = "✓ SonicGuard.asi พร้อมทำงาน (scripts\\SonicGuard.asi)";
 				lblGuardStatus.ForeColor = colOk;
-				swSonicGuard.Checked = (iniEnable != "0");
+				swSonicGuard.SetCheckedSilent(true);
 			}
 			else if (asiDisExists)
 			{
 				lblGuardStatus.Text = "⏸ SonicGuard.asi ถูกปิดชั่วคราว (.disabled)";
 				lblGuardStatus.ForeColor = colYellow;
-				swSonicGuard.Checked = false;
+				swSonicGuard.SetCheckedSilent(false);
 			}
 			else
 			{
 				lblGuardStatus.Text = "⚠ ยังไม่พบ scripts\\SonicGuard.asi";
 				lblGuardStatus.ForeColor = Color.FromArgb(255, 110, 110);
-				swSonicGuard.Checked = false;
+				swSonicGuard.SetCheckedSilent(false);
 			}
 
-			swBorderless.Checked = (iniBorderless == "1");
+			ThreadPool.QueueUserWorkItem(delegate
+			{
+				ShieldDiagnostics diag = null;
+				try { diag = core.GetShieldDiagnostics(gameDir, "", 0); } catch { }
+				try
+				{
+					if (!base.IsDisposed)
+					{
+						BeginInvoke((MethodInvoker)delegate
+						{
+							if (base.IsDisposed || reqSeq != modsRefreshSeq) return;
+							if (diag != null)
+							{
+								swSonicGuard.SetCheckedSilent(asiExists && diag.Enable);
+								swBorderless.SetCheckedSilent(diag.Borderless);
+							}
+						});
+					}
+				}
+				catch { }
+			});
 
 			// Guard Runtime Status (Telemetry & Crash)
 			GuardRuntimeStatus rt = core.GetGuardStatus(gameDir);
 			if (rt != null && rt.Telemetry != null && rt.Telemetry.WorkingSetMb > 0)
 			{
+				List<string> badges = new List<string>();
+				if (rt.Telemetry.NetShieldActive) badges.Add("Net(" + rt.Telemetry.TunedUdpSockets + ")");
+				if (rt.Telemetry.AudioShieldActive) badges.Add("Mic");
+				if (rt.Telemetry.GpuShieldActive) badges.Add("GPU");
+				if (rt.Telemetry.BorderlessActive) badges.Add("Borderless");
+				string shieldText = badges.Count > 0 ? string.Join(" • ", badges.ToArray()) : "รอดึงข้อมูล";
+				string micText = string.IsNullOrEmpty(rt.Telemetry.ActiveMic) ? "Windows Default" : rt.Telemetry.ActiveMic;
+				if (micText.Length > 26) micText = micText.Substring(0, 23) + "...";
+				string freeText = (rt.Telemetry.SystemFreeRamMb > 0) ? (" | ว่าง " + rt.Telemetry.SystemFreeRamMb + "MB") : "";
 				lblTelemetryInfo.Text = string.Format(
-					"RAM ขณะเล่น: {0} MB (สูงสุด {1} MB)\r\nVirtual Memory: {2} MB / 4096 MB",
+					"RAM: {0}/{1}MB | VM: {2}MB{3}\r\nไมค์: {4}\r\nShield: {5}",
 					rt.Telemetry.WorkingSetMb,
 					rt.Telemetry.PeakWorkingSetMb,
-					rt.Telemetry.VirtualMemMb);
+					rt.Telemetry.VirtualMemMb,
+					freeText,
+					micText,
+					shieldText);
 				lblTelemetryInfo.ForeColor = (rt.Telemetry.VirtualMemMb > 3100) ? colYellow : colText;
 			}
 			else
@@ -273,7 +346,7 @@ internal partial class LauncherForm : Form
 			clbModFolders.Items.Clear();
 			if (cachedModState != null && cachedModState.Installed)
 			{
-				swModSafeMode.Checked = cachedModState.IgnoreAll;
+				swModSafeMode.SetCheckedSilent(cachedModState.IgnoreAll);
 				lblModloaderInfo.Text = string.Format(
 					"โปรไฟล์: {0}  •  พบทั้งหมด {1} โฟลเดอร์",
 					cachedModState.Profile,
@@ -293,7 +366,7 @@ internal partial class LauncherForm : Form
 			}
 			else
 			{
-				swModSafeMode.Checked = false;
+				swModSafeMode.SetCheckedSilent(false);
 				lblModloaderInfo.Text = "ไม่พบโฟลเดอร์ modloader ในตัวเกม";
 				lblModloaderInfo.ForeColor = colSub;
 			}
@@ -327,7 +400,9 @@ internal partial class LauncherForm : Form
 				{
 					File.Move(disPath, asiPath);
 				}
-				SaveSonicGuardIniValue("Enable", "1");
+				Dictionary<string, string> upd = new Dictionary<string, string>();
+				upd["Enable"] = "1";
+				core.SaveShieldIni(gameDir, upd);
 				if (File.Exists(asiPath))
 				{
 					ToastOk("เปิดใช้งาน SonicGuard.asi เรียบร้อย");
@@ -344,7 +419,9 @@ internal partial class LauncherForm : Form
 					if (File.Exists(disPath)) File.Delete(disPath);
 					File.Move(asiPath, disPath);
 				}
-				SaveSonicGuardIniValue("Enable", "0");
+				Dictionary<string, string> upd = new Dictionary<string, string>();
+				upd["Enable"] = "0";
+				core.SaveShieldIni(gameDir, upd);
 				ToastOk("ปิดใช้งาน SonicGuard.asi เรียบร้อย");
 			}
 		}
@@ -353,78 +430,6 @@ internal partial class LauncherForm : Form
 			ShowErr("ไม่สามารถสลับสถานะ SonicGuard.asi (อาจกำลังรันเกมอยู่): " + ex.Message);
 		}
 		RefreshModsPage();
-	}
-
-	private string ReadSonicGuardIniValue(string key, string defVal)
-	{
-		string iniPath = Path.Combine(GetGameDir(), "scripts", "SonicGuard.ini");
-		if (!File.Exists(iniPath))
-		{
-			return defVal;
-		}
-		try
-		{
-			string[] lines = File.ReadAllLines(iniPath, Encoding.UTF8);
-			foreach (string raw in lines)
-			{
-				string t = raw.Trim();
-				if (t.StartsWith(";") || t.StartsWith("#") || t.StartsWith("[")) continue;
-				int eq = t.IndexOf('=');
-				if (eq > 0)
-				{
-					string k = t.Substring(0, eq).Trim();
-					if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase))
-					{
-						return t.Substring(eq + 1).Trim();
-					}
-				}
-			}
-		}
-		catch { }
-		return defVal;
-	}
-
-	private void SaveSonicGuardIniValue(string key, string val)
-	{
-		string scriptsDir = Path.Combine(GetGameDir(), "scripts");
-		if (!Directory.Exists(scriptsDir))
-		{
-			Directory.CreateDirectory(scriptsDir);
-		}
-		string iniPath = Path.Combine(scriptsDir, "SonicGuard.ini");
-		List<string> lines = new List<string>();
-		if (File.Exists(iniPath))
-		{
-			lines.AddRange(File.ReadAllLines(iniPath, Encoding.UTF8));
-		}
-		else
-		{
-			lines.Add("[SonicGuard]");
-			lines.Add("Enable = 1");
-			lines.Add("Borderless = 0");
-			lines.Add("CatchCrash = 1");
-			lines.Add("HighPrecisionTimer = 1");
-			lines.Add("Telemetry = 1");
-		}
-
-		bool replaced = false;
-		for (int i = 0; i < lines.Count; i++)
-		{
-			string t = lines[i].Trim();
-			if (t.StartsWith(";") || t.StartsWith("#") || t.StartsWith("[")) continue;
-			int eq = t.IndexOf('=');
-			if (eq > 0 && string.Equals(t.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase))
-			{
-				lines[i] = key + " = " + val;
-				replaced = true;
-				break;
-			}
-		}
-		if (!replaced)
-		{
-			lines.Add(key + " = " + val);
-		}
-		File.WriteAllLines(iniPath, lines.ToArray(), new UTF8Encoding(false));
 	}
 
 	private void CycleSelectedModPriority()
@@ -540,7 +545,7 @@ internal partial class LauncherForm : Form
 		using (Form dlg = new Form())
 		{
 			dlg.Text = "รายงานตรวจสอบไฟล์เกม (Asset Scanner)";
-			dlg.ClientSize = new Size(640, 440);
+			dlg.ClientSize = DpiHelper.Sz(640, 440);
 			dlg.StartPosition = FormStartPosition.CenterParent;
 			dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
 			dlg.MaximizeBox = false;
@@ -548,13 +553,14 @@ internal partial class LauncherForm : Form
 			dlg.BackColor = colBg;
 			dlg.ForeColor = colText;
 
+			string truncNote = rep.TruncatedIssues ? "  [แสดงเฉพาะ 500 รายการแรก]" : "";
 			string summary = string.Format(
 				"สแกนทั้งหมด {0} ไฟล์  (DFF: {1}  •  TXD: {2}  •  COL: {3}  •  IFP: {4}  •  IMG: {5}  •  Textures: {6})\r\n" +
-				"พบข้อผิดพลาดร้ายแรง: {7}  |  คำเตือน (ขนาดใหญ่): {8}  |  ไฟล์ชื่อซ้ำใน ModLoader: {9}",
+				"พบข้อผิดพลาดร้ายแรง: {7}  |  คำเตือน (ขนาดใหญ่): {8}  |  ไฟล์ชื่อซ้ำใน ModLoader: {9}{10}",
 				rep.ScannedFiles, rep.DffCount, rep.TxdCount, rep.ColCount, rep.IfpCount, rep.ImgCount, rep.TextureCount,
-				rep.ErrorCount, rep.WarnCount, rep.DuplicateCount);
+				rep.ErrorCount, rep.WarnCount, rep.DuplicateCount, truncNote);
 
-			Color sumCol = (rep.ErrorCount > 0) ? Color.FromArgb(255, 99, 99) : ((rep.WarnCount > 0 || rep.DuplicateCount > 0) ? colYellow : colOk);
+			Color sumCol = (rep.ErrorCount > 0) ? Color.FromArgb(255, 99, 99) : ((rep.WarnCount > 0 || rep.DuplicateCount > 0 || rep.TruncatedIssues) ? colYellow : colOk);
 			Label lblSum = AddLbl(dlg, summary, fSmall, 16, 14, sumCol);
 			lblSum.AutoSize = false;
 			lblSum.Size = new Size(608, 38);
@@ -568,6 +574,10 @@ internal partial class LauncherForm : Form
 			lb.Font = fSmall;
 			lb.HorizontalScrollbar = true;
 
+			if (rep.TruncatedIssues)
+			{
+				lb.Items.Add("⚠ [TRUNCATED] พบปัญหามากเกิน 500 รายการ ระบบตัดทอนรายการที่เหลือเพื่อลดการใช้หน่วยความจำ");
+			}
 			if (rep.Issues.Count == 0)
 			{
 				lb.Items.Add("✓ ยอดเยี่ยม! ไม่พบโมเดลเสีย เท็กซ์เจอร์ขนาดใหญ่เกิน หรือไฟล์ทับซ้อนใน ModLoader");
@@ -603,6 +613,7 @@ internal partial class LauncherForm : Form
 			btnClose.Click += delegate { dlg.Close(); };
 			dlg.Controls.Add(btnClose);
 			dlg.CancelButton = btnClose;
+			DpiHelper.ScaleControlTree(dlg);
 
 			dlg.ShowDialog(this);
 		}
@@ -616,7 +627,7 @@ internal partial class LauncherForm : Form
 			if (rt != null && rt.HasCrash && rt.Crash != null)
 			{
 				CyberAudio.PlayAlert();
-				ShowLatestCrashDialog(false);
+				ShowCrashReportDialog(rt.Crash);
 			}
 		}
 		catch
@@ -636,12 +647,20 @@ internal partial class LauncherForm : Form
 			}
 			return;
 		}
+		ShowCrashReportDialog(rt.Crash);
+	}
 
-		CrashInfo c = rt.Crash;
+	private void ShowCrashReportDialog(CrashInfo c)
+	{
+		if (c == null)
+		{
+			return;
+		}
+		string gameDir = GetGameDir();
 		using (Form dlg = new Form())
 		{
 			dlg.Text = "⚠️ Sonic Guard — วิเคราะห์สาเหตุเกมเด้ง (Crash Analyzer)";
-			dlg.ClientSize = new Size(560, 400);
+			dlg.ClientSize = DpiHelper.Sz(560, 400);
 			dlg.StartPosition = FormStartPosition.CenterParent;
 			dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
 			dlg.MaximizeBox = false;
@@ -713,6 +732,7 @@ internal partial class LauncherForm : Form
 			btnClose.Click += delegate { dlg.Close(); };
 			dlg.Controls.Add(btnClose);
 			dlg.CancelButton = btnClose;
+			DpiHelper.ScaleControlTree(dlg);
 
 			dlg.ShowDialog(this);
 		}

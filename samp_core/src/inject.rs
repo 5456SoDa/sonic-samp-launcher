@@ -1,5 +1,11 @@
+use crate::health;
+use crate::net_shield;
 use crate::query::resolve_host;
+use crate::resources;
+use crate::watchdog;
+use crate::win_ro::to_wide;
 use std::ffi::CString;
+use std::path::Path;
 use std::ptr::null;
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
@@ -15,10 +21,6 @@ use windows_sys::Win32::System::Threading::{
     PROCESS_INFORMATION, STARTUPINFOW,
 };
 
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
 struct HandleGuard(HANDLE);
 impl Drop for HandleGuard {
     fn drop(&mut self) {
@@ -30,6 +32,37 @@ impl Drop for HandleGuard {
     }
 }
 
+pub fn sanitize_cli_token(s: &str) -> String {
+    s.chars()
+        .filter(|&c| c != '"' && c != '\r' && c != '\n' && !c.is_whitespace())
+        .collect()
+}
+
+pub fn build_samp_cmdline(
+    gta_path: &str,
+    nick: &str,
+    target_ip: &str,
+    port: &str,
+    pass: &str,
+) -> String {
+    let safe_nick = sanitize_cli_token(nick);
+    let safe_ip = sanitize_cli_token(target_ip);
+    let safe_port = sanitize_cli_token(port);
+    let safe_pass: String = pass
+        .chars()
+        .filter(|&c| c != '"' && c != '\r' && c != '\n')
+        .collect();
+
+    let mut cmd = format!(
+        "\"{}\" -c -n {} -h {} -p {}",
+        gta_path, safe_nick, safe_ip, safe_port
+    );
+    if !safe_pass.is_empty() {
+        cmd.push_str(&format!(" -z \"{}\"", safe_pass));
+    }
+    cmd
+}
+
 pub fn launch_and_inject(
     gta_path: &str,
     dll_path: &str,
@@ -38,18 +71,23 @@ pub fn launch_and_inject(
     ip: &str,
     port: &str,
     pass: &str,
-) -> Result<(), String> {
+) -> Result<u32, String> {
     let target_ip = resolve_host(ip)
         .map(|v| v.to_string())
-        .unwrap_or_else(|| ip.to_string());
+        .unwrap_or_else(|| ip.trim().to_string());
 
-    let mut cmd = format!(
-        "\"{}\" -c -n {} -h {} -p {}",
-        gta_path, nick, target_ip, port
-    );
-    if !pass.is_empty() {
-        cmd.push_str(&format!(" -z {}", pass));
+    let game_dir = Path::new(work_dir);
+    let sg_cfg = resources::read_sonic_guard_settings(game_dir);
+    if sg_cfg.enable {
+        let _ = health::apply_adaptive_memory_budget(game_dir);
+        if sg_cfg.net_shield {
+            if let Ok(port_num) = port.trim().parse::<u16>() {
+                let _ = net_shield::prewarm_connection(&target_ip, port_num, None);
+            }
+        }
     }
+
+    let cmd = build_samp_cmdline(gta_path, nick, &target_ip, port, pass);
 
     let app_w = to_wide(gta_path);
     let mut cmd_w = to_wide(&cmd);
@@ -78,8 +116,12 @@ pub fn launch_and_inject(
         return Err(format!("เปิด gta_sa.exe ไม่ได้ (Win32 error {})", err));
     }
 
-    let proc_guard = HandleGuard(pi.hProcess);
+    let mut proc_guard = HandleGuard(pi.hProcess);
     let thread_guard = HandleGuard(pi.hThread);
+
+    if sg_cfg.enable {
+        resources::apply_process_launch_boost(proc_guard.0);
+    }
 
     if let Err(e) = inject_dll(pi.dwProcessId, dll_path) {
         unsafe {
@@ -91,7 +133,11 @@ pub fn launch_and_inject(
     unsafe {
         ResumeThread(thread_guard.0);
     }
-    Ok(())
+
+    let raw_proc = proc_guard.0;
+    proc_guard.0 = std::ptr::null_mut();
+    watchdog::register_launch(pi.dwProcessId, raw_proc, game_dir, ip, port);
+    Ok(pi.dwProcessId)
 }
 
 fn inject_dll(pid: u32, dll_path: &str) -> Result<(), String> {
@@ -192,4 +238,24 @@ fn inject_dll(pid: u32, dll_path: &str) -> Result<(), String> {
         VirtualFreeEx(proc_guard.0, remote_buf, 0, MEM_RELEASE);
     }
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_samp_cmdline_quotes_pass_and_sanitizes() {
+        let cmd = build_samp_cmdline(
+            r"C:\Games\gta_sa.exe",
+            "So Da\"\n",
+            "127.0.0.1",
+            "7777",
+            "my \"secret\" pass",
+        );
+        assert_eq!(
+            cmd,
+            "\"C:\\Games\\gta_sa.exe\" -c -n SoDa -h 127.0.0.1 -p 7777 -z \"my secret pass\""
+        );
+    }
 }
